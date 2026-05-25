@@ -1,0 +1,77 @@
+{
+  "users": [
+    {
+      "username": "john-doe",
+      "email": "john.doe@company.com",
+      "nickname": "John Doe",
+      "teams": ["it-department", "hr-team"]
+    },
+    {
+      "username": "sarah-khan",
+      "email": "sarah.khan@company.com",
+      "nickname": "Sarah Khan",
+      "teams": ["it-department"]
+    },
+    {
+      "username": "admin",
+      "email": "admin@company.com",
+      "nickname": "Administrator",
+      "teams": ["it-department", "hr-team"]
+    }
+  ],
+  "teams": [
+    {
+      "name": "it-department",
+      "display_name": "IT Department",
+      "description": "IT Department Chat and Operations",
+      "channels": [
+        {
+          "name": "general",
+          "display_name": "General",
+          "posts": [
+            {
+              "username": "john-doe",
+              "message": "Hello IT Department Team!",
+              "timestamp_ms": 1716537600000
+            },
+            {
+              "username": "sarah-khan",
+              "message": "Hi John! Glad to be here.",
+              "timestamp_ms": 1716541200000
+            }
+          ]
+        },
+        {
+          "name": "incident-bridge",
+          "display_name": "Incident Bridge",
+          "is_private": true,
+          "posts": [
+            {
+              "username": "admin",
+              "message": "Confidential escalation notes for the bridge.",
+              "timestamp_ms": 1716544800000
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "hr-team",
+      "display_name": "HR Team",
+      "description": "Human Resources Team Discussions",
+      "channels": [
+        {
+          "name": "general",
+          "display_name": "General",
+          "posts": [
+            {
+              "username": "john-doe",
+              "message": "Hello HR team, quick question about onboarding.",
+              "timestamp_ms": 1716548400000
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

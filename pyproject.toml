@@ -1,0 +1,61 @@
+[tool.pytest.ini_options]
+addopts = "-ra --cov=teams_mattermost_migration_parser --cov-report=term-missing"
+testpaths = [
+  "apps/parser/tests",
+  "tests",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+src = [
+  "apps/parser/src",
+  "apps/parser/tests",
+  "tests",
+]
+
+[tool.ruff.lint]
+select = [
+  "B",
+  "E",
+  "F",
+  "I",
+  "N",
+  "SIM",
+  "UP",
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["teams_mattermost_migration_parser"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+line-ending = "lf"
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+warn_unused_configs = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+plugins = ["pydantic.mypy"]
+mypy_path = ["apps/parser/src"]
+files = [
+  "apps/parser/src",
+  "apps/parser/tests",
+  "tests",
+  "conftest.py",
+]
+
+[[tool.mypy.overrides]]
+module = ["ijson"]
+ignore_missing_imports = true
+
+[tool.coverage.run]
+branch = true
+source = ["teams_mattermost_migration_parser"]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = false

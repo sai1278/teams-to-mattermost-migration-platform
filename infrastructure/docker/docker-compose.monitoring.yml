@@ -1,0 +1,100 @@
+networks:
+  platform:
+    driver: bridge
+  data:
+    driver: bridge
+
+volumes:
+  grafana-data:
+  loki-data:
+
+services:
+  prometheus:
+    image: prom/prometheus:${PROMETHEUS_IMAGE_TAG}
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --web.enable-lifecycle
+    volumes:
+      - ../monitoring/prometheus:/etc/prometheus:ro
+    ports:
+      - ${PROMETHEUS_PORT}:9090
+    networks:
+      - platform
+      - data
+
+  loki:
+    image: grafana/loki:${LOKI_IMAGE_TAG}
+    restart: unless-stopped
+    command: ["-config.file=/etc/loki/local-config.yaml"]
+    volumes:
+      - ../monitoring/loki/loki-config.yml:/etc/loki/local-config.yaml:ro
+      - loki-data:/loki
+    ports:
+      - ${LOKI_PORT}:3100
+    networks:
+      - platform
+
+  promtail:
+    image: grafana/promtail:${PROMTAIL_IMAGE_TAG}
+    restart: unless-stopped
+    command: ["-config.file=/etc/promtail/promtail-config.yml"]
+    volumes:
+      - ../monitoring/promtail/promtail-config.yml:/etc/promtail/promtail-config.yml:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+    networks:
+      - platform
+
+  grafana:
+    image: grafana/grafana:${GRAFANA_IMAGE_TAG}
+    restart: unless-stopped
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - ../monitoring/grafana/provisioning/datasources:/etc/grafana/provisioning/datasources:ro
+      - ../monitoring/grafana/provisioning/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - ../monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    ports:
+      - ${GRAFANA_PORT}:3000
+    networks:
+      - platform
+
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:${CADVISOR_IMAGE_TAG}
+    restart: unless-stopped
+    privileged: true
+    devices:
+      - /dev/kmsg:/dev/kmsg
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker:/var/lib/docker:ro
+      - /dev/disk:/dev/disk:ro
+    ports:
+      - ${CADVISOR_PORT}:8080
+    networks:
+      - data
+
+  postgres-exporter:
+    image: prometheuscommunity/postgres-exporter:${POSTGRES_EXPORTER_IMAGE_TAG}
+    restart: unless-stopped
+    environment:
+      DATA_SOURCE_NAME: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}?sslmode=disable
+    ports:
+      - ${POSTGRES_EXPORTER_PORT}:9187
+    networks:
+      - data
+
+  pushgateway:
+    image: prom/pushgateway:${PUSHGATEWAY_IMAGE_TAG}
+    restart: unless-stopped
+    ports:
+      - ${PUSHGATEWAY_PORT}:9091
+    networks:
+      - platform

@@ -1,0 +1,30 @@
+{
+  "users": [
+    {
+      "username": "john-doe",
+      "email": "john.doe@company.com",
+      "nickname": "John Doe",
+      "teams": ["it-department", "missing-team"]
+    }
+  ],
+  "teams": [
+    {
+      "name": "it-department",
+      "display_name": "IT Department",
+      "description": "IT Department Chat and Operations",
+      "channels": [
+        {
+          "name": "general",
+          "display_name": "General",
+          "posts": [
+            {
+              "username": "missing-user",
+              "message": "Hello team!",
+              "timestamp_ms": 1716537600000
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

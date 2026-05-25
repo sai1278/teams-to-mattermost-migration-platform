@@ -1,0 +1,11 @@
+apiVersion: 1
+
+providers:
+  - name: "Migration Lab Dashboards"
+    orgId: 1
+    folder: "Migration Lab"
+    type: file
+    disableDeletion: false
+    editable: true
+    options:
+      path: /var/lib/grafana/dashboards

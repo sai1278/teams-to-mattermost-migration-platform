@@ -1,0 +1,44 @@
+# Python
+__pycache__/
+*.py[cod]
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+.tox/
+.venv/
+venv/
+env/
+
+# Local environment
+.env
+.env.local
+.env.production
+.env.development
+.python-version
+
+# Build and package output
+build/
+dist/
+*.egg-info/
+
+# Runtime artifacts
+artifacts/*
+!artifacts/.gitkeep
+*.log
+tmp/
+
+# Docker and local data
+postgres/
+mm-data/
+mm-config/
+mm-plugins/
+monitoring-data/
+
+# Editor and OS noise
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# Node tooling
+node_modules/

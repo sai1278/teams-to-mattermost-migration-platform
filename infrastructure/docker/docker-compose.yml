@@ -1,0 +1,144 @@
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: 10m
+    max-file: "3"
+
+x-security-defaults: &default-security
+  security_opt:
+    - no-new-privileges:true
+
+networks:
+  platform:
+    driver: bridge
+  data:
+    driver: bridge
+    internal: true
+
+volumes:
+  postgres-data:
+  mattermost-data:
+  mattermost-config:
+  mattermost-plugins:
+  mattermost-logs:
+
+services:
+  postgres:
+    image: postgres:${POSTGRES_IMAGE_TAG}
+    restart: unless-stopped
+    init: true
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    command:
+      - postgres
+      - -c
+      - max_connections=200
+      - -c
+      - shared_buffers=256MB
+    ports:
+      - 127.0.0.1:${POSTGRES_PORT}:5432
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    networks:
+      - data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 10s
+    stop_grace_period: 30s
+    security_opt:
+      - no-new-privileges:true
+    logging: *default-logging
+    deploy:
+      resources:
+        limits:
+          cpus: "1.00"
+          memory: 768M
+        reservations:
+          cpus: "0.25"
+          memory: 256M
+
+  mattermost:
+    image: mattermost/mattermost-team-edition:${MATTERMOST_IMAGE_TAG}
+    restart: unless-stopped
+    init: true
+    user: "2000:2000"
+    environment:
+      MM_SERVICESETTINGS_SITEURL: ${MM_SERVICESETTINGS_SITEURL}
+      MM_SERVICESETTINGS_LISTENADDRESS: ${MM_SERVICESETTINGS_LISTENADDRESS}
+      MM_SQLSETTINGS_DRIVERNAME: postgres
+      MM_SQLSETTINGS_DATASOURCE: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}?sslmode=disable&connect_timeout=10
+      MM_FILESETTINGS_DRIVERNAME: local
+      MM_FILESETTINGS_DIRECTORY: /mattermost/data
+      MM_PLUGINSETTINGS_ENABLE: ${MATTERMOST_PLUGIN_ENABLE}
+      MM_PLUGINSETTINGS_ENABLEUPLOADS: "true"
+      MM_LOGSETTINGS_ENABLECONSOLE: "true"
+      MM_LOGSETTINGS_CONSOLELEVEL: ${MATTERMOST_LOG_LEVEL}
+      MM_METRICSSETTINGS_ENABLE: ${MATTERMOST_METRICS_ENABLE}
+      MM_METRICSSETTINGS_LISTENADDRESS: :8067
+    ports:
+      - ${MATTERMOST_PORT}:8065
+    expose:
+      - "8067"
+    volumes:
+      - mattermost-data:/mattermost/data
+      - mattermost-config:/mattermost/config
+      - mattermost-plugins:/mattermost/plugins
+      - mattermost-logs:/mattermost/logs
+    networks:
+      - platform
+      - data
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget --spider --quiet http://localhost:8065/api/v4/system/ping || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 8
+      start_period: 30s
+    stop_grace_period: 45s
+    security_opt:
+      - no-new-privileges:true
+    logging: *default-logging
+    deploy:
+      resources:
+        limits:
+          cpus: "2.00"
+          memory: 2G
+        reservations:
+          cpus: "0.50"
+          memory: 768M
+
+  parser:
+    build:
+      context: ../..
+      dockerfile: apps/parser/Dockerfile
+    profiles: ["tooling"]
+    init: true
+    environment:
+      TMMP_BATCH_SIZE: ${TMMP_BATCH_SIZE:-500}
+      TMMP_LOG_LEVEL: ${TMMP_LOG_LEVEL:-INFO}
+      TMMP_METRICS_OUTPUT_PATH: /workspace/artifacts/metrics/parser.prom
+      TMMP_METRICS_PUSHGATEWAY_URL: ${TMMP_METRICS_PUSHGATEWAY_URL:-http://pushgateway:9091}
+      TMMP_OTEL_SERVICE_NAME: teams-mattermost-migration-parser
+    command:
+      - --input
+      - /workspace/tests/fixtures/sample-teams-export.json
+      - --output
+      - /workspace/artifacts/imports/sample-import.jsonl
+    user: "65532:65532"
+    read_only: true
+    tmpfs:
+      - /tmp
+    volumes:
+      - ../../artifacts:/workspace/artifacts
+      - ../../tests/fixtures:/workspace/tests/fixtures:ro
+    networks:
+      - platform
+    logging: *default-logging
+    <<: *default-security

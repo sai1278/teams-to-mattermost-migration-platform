@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: teams-mattermost-migration
+  labels:
+    app.kubernetes.io/name: teams-mattermost-migration
+    app.kubernetes.io/part-of: platform-engineering

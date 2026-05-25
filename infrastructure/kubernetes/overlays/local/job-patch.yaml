@@ -1,0 +1,11 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: parser-job
+  namespace: teams-mattermost-migration
+spec:
+  template:
+    spec:
+      containers:
+        - name: parser
+          image: teams-mattermost-parser:local

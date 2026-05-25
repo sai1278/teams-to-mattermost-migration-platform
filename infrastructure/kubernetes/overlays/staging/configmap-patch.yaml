@@ -1,0 +1,9 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: parser-config
+  namespace: teams-mattermost-migration
+data:
+  INPUT_PATH: s3://teams-mattermost-imports/staging/input/export.json
+  OUTPUT_PATH: s3://teams-mattermost-imports/staging/output/import.jsonl
+  ANONYMIZE_EXPORTS: "true"

@@ -1,0 +1,29 @@
+groups:
+  - name: migration-platform
+    rules:
+      - alert: MattermostUnavailable
+        expr: up{job="mattermost"} == 0
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: Mattermost metrics endpoint is unavailable
+          description: The Mattermost service has not exposed metrics for more than 5 minutes.
+
+      - alert: ParserRunFailure
+        expr: increase(tmmp_parser_runs_total{status="failed"}[15m]) > 0
+        for: 0m
+        labels:
+          severity: warning
+        annotations:
+          summary: Parser failures detected
+          description: One or more parser runs failed in the last 15 minutes.
+
+      - alert: ParserThroughputDegraded
+        expr: tmmp_parser_records_per_second < 1
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: Parser throughput is below the expected minimum
+          description: The last successful parser run reported less than one record per second.
