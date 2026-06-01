@@ -4,11 +4,28 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    groups:
+      github-actions-dependencies:
+        patterns:
+          - "*"
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
+
   - package-ecosystem: pip
     directory: /
     schedule:
       interval: weekly
+    groups:
+      dev-dependencies:
+        patterns:
+          - "*"
+
   - package-ecosystem: pip
     directory: /apps/parser
     schedule:
       interval: weekly
+    groups:
+      parser-dependencies:
+        patterns:
+          - "*"

@@ -12,6 +12,8 @@ name: security
 jobs:
   dependency-audit:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -32,8 +34,12 @@ jobs:
 
   gitleaks:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: gitleaks/gitleaks-action@v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -49,6 +55,7 @@ jobs:
         uses: aquasecurity/trivy-action@0.24.0
         with:
           scan-type: fs
+          scan-ref: '.'
           format: sarif
           output: trivy-results.sarif
       - name: Upload Trivy SARIF
@@ -60,3 +67,4 @@ jobs:
         with:
           path: .
           format: spdx-json
+          dependency-snapshot: false
