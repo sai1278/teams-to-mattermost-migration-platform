@@ -59,8 +59,8 @@ jobs:
       - name: Install shell and config tooling
         run: |
           sudo apt-get update
-          sudo apt-get install -y shellcheck shfmt yamllint
-          npm install -g markdownlint-cli
+          sudo apt-get install -y shellcheck shfmt yamllint nodejs npm
+          sudo npm install -g markdownlint-cli
       - name: ShellCheck
         run: shellcheck $(find scripts -type f -name '*.sh')
       - name: Shell formatting
@@ -77,15 +77,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Validate core compose
-        run: >
-          docker compose --env-file infrastructure/docker/.env.example
-          -f infrastructure/docker/docker-compose.yml
-          config
+        run: docker compose -f infrastructure/docker/docker-compose.yml config
       - name: Validate monitoring compose
-        run: >
-          docker compose --env-file infrastructure/docker/.env.example
-          -f infrastructure/docker/docker-compose.monitoring.yml
-          config
+        run: docker compose -f infrastructure/docker/docker-compose.monitoring.yml config
       - name: Build parser image
         run: docker build -f apps/parser/Dockerfile .
 
@@ -95,7 +89,7 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@v4
-      - uses: kubernetes-sigs/setup-kustomize@v3
+      - uses: multani/action-setup-kustomize@v2
       - name: Install kubeconform
         run: |
           curl -sSL -o kubeconform.tar.gz \
