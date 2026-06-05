@@ -11,11 +11,14 @@ from typing import Any
 class JsonlFileWriter:
     """Write JSONL records in batches to reduce syscall overhead on large runs."""
 
-    def __init__(self, output_path: Path, *, batch_size: int):
+    def __init__(self, output_path: Path, *, batch_size: int, append: bool = False):
         self._output_path = output_path
         self._batch_size = batch_size
         self._buffer: list[str] = []
-        self._handle = self._output_path.open("w", encoding="utf-8")
+        self._existing_size = output_path.stat().st_size if output_path.exists() else 0
+        self._append = append
+        mode = "a" if append else "w"
+        self._handle = self._output_path.open(mode, encoding="utf-8")
 
     def write_record(self, record: Mapping[str, Any]) -> None:
         self._buffer.append(json.dumps(dict(record), sort_keys=True))
@@ -33,3 +36,11 @@ class JsonlFileWriter:
     def close(self) -> None:
         self.flush()
         self._handle.close()
+
+    @property
+    def has_existing_content(self) -> bool:
+        return self._existing_size > 0
+
+    @property
+    def append_mode(self) -> bool:
+        return self._append

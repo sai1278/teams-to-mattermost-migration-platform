@@ -59,3 +59,4 @@ source = ["teams_mattermost_migration_parser"]
 [tool.coverage.report]
 show_missing = true
 skip_covered = false
+fail_under = 90

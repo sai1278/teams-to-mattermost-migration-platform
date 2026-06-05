@@ -2,8 +2,15 @@
 
 from __future__ import annotations
 
+import hashlib
+import logging
+import re
+import shutil
+import time
+import urllib.request
 from collections.abc import Iterator
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 from ..config import ParserConfig
@@ -15,9 +22,65 @@ from ..constants import (
     RECORD_TYPE_VERSION,
 )
 from ..domain.exceptions import InputValidationError
-from ..domain.models import ChannelRecord, TeamRecord, UserRecord
-from ..domain.normalization import scrub_message, slugify, stable_alias
+from ..domain.models import (
+    AttachmentRecord,
+    ChannelRecord,
+    DirectChannelRecord,
+    PostRecord,
+    TeamRecord,
+    TeamsExport,
+    UserRecord,
+)
+from ..domain.normalization import AnonymizerPipeline, slugify, stable_alias
+from ..observability.metrics import ParserMetrics
 from .protocols import TeamsExportSource
+
+LOGGER = logging.getLogger(__name__)
+
+
+class _TeamsExportSourceAdapter:
+    """Adapt an in-memory export aggregate to the streaming source protocol."""
+
+    def __init__(self, export: TeamsExport):
+        self._export = export
+
+    def iter_teams(self) -> Iterator[TeamRecord]:
+        return iter(self._export.teams)
+
+    def iter_users(self) -> Iterator[UserRecord]:
+        return iter(self._export.users)
+
+    def iter_direct_channels(self) -> Iterator[DirectChannelRecord]:
+        return iter(self._export.direct_channels)
+
+    def input_size_bytes(self) -> int:
+        return 0
+
+    def materialize(self) -> TeamsExport:
+        return self._export
+
+
+def _coerce_source(source: TeamsExport | TeamsExportSource) -> TeamsExportSource:
+    if isinstance(source, TeamsExport):
+        return _TeamsExportSourceAdapter(source)
+    return source
+
+
+class SlugRegistry:
+    """Registry to manage and resolve unique, collision-free slugs."""
+
+    def __init__(self) -> None:
+        self._used: set[str] = set()
+
+    def make_unique(self, value: str) -> str:
+        base = slugify(value)
+        candidate = base
+        counter = 1
+        while candidate in self._used:
+            candidate = f"{base}-{counter}"
+            counter += 1
+        self._used.add(candidate)
+        return candidate
 
 
 @dataclass(frozen=True)
@@ -28,6 +91,8 @@ class ExportValidationResult:
     channel_count: int
     user_count: int
     post_count: int
+    direct_channel_count: int
+    direct_post_count: int
     team_slugs: frozenset[str]
     user_slugs: frozenset[str]
 
@@ -38,7 +103,8 @@ class ExportValidationService:
     def __init__(self, config: ParserConfig):
         self._config = config
 
-    def validate(self, source: TeamsExportSource) -> ExportValidationResult:
+    def validate(self, source: TeamsExportSource | TeamsExport) -> ExportValidationResult:
+        source = _coerce_source(source)
         errors: list[str] = []
         user_slugs: set[str] = set()
         user_team_memberships: dict[str, set[str]] = {}
@@ -62,6 +128,11 @@ class ExportValidationService:
             if team_slug in team_slugs:
                 errors.append(f"duplicate team name after normalization: {team.name}")
             team_slugs.add(team_slug)
+            for member in set(team.members) | set(team.owners):
+                if slugify(member) not in user_slugs:
+                    errors.append(
+                        f"team member '{member}' in team '{team.name}' is missing from users"
+                    )
             channel_slugs: set[str] = set()
 
             for channel in team.channels:
@@ -74,12 +145,31 @@ class ExportValidationService:
                     )
                 channel_slugs.add(channel_slug)
 
+                channel_post_ids: set[str] = set()
                 for post in channel.posts:
                     post_count += 1
+                    if post.id:
+                        if post.id in channel_post_ids:
+                            errors.append(
+                                f"duplicate post id in channel '{channel.name}': {post.id}"
+                            )
+                        channel_post_ids.add(post.id)
                     if slugify(post.username) not in user_slugs:
                         errors.append(
                             "post author "
                             f"'{post.username}' in channel '{channel.name}' is missing from users"
+                        )
+                    if post.parent_id and post.parent_id not in channel_post_ids:
+                        errors.append(
+                            "post reply "
+                            f"'{post.id or post.username}' in channel '{channel.name}' "
+                            f"references unknown parent '{post.parent_id}'"
+                        )
+                for member in set(channel.members) | set(channel.owners):
+                    if slugify(member) not in user_slugs:
+                        errors.append(
+                            f"channel member '{member}' in channel "
+                            f"'{channel.name}' is missing from users"
                         )
 
         for user_slug, memberships in user_team_memberships.items():
@@ -88,6 +178,22 @@ class ExportValidationService:
                 errors.append(
                     f"user '{user_slug}' references unknown teams: {sorted(missing_teams)}"
                 )
+
+        # Validate direct channels and direct posts if available
+        direct_channel_count = 0
+        direct_post_count = 0
+        for dc in source.iter_direct_channels():
+            direct_channel_count += 1
+            for member in dc.members:
+                if slugify(member) not in user_slugs:
+                    errors.append(f"direct channel member '{member}' is missing from users")
+
+            for post in dc.posts:
+                direct_post_count += 1
+                if slugify(post.username) not in user_slugs:
+                    errors.append(
+                        f"direct post author '{post.username}' in DM channel is missing from users"
+                    )
 
         if self._config.fail_on_empty_export and (team_count == 0 or user_count == 0):
             errors.append("input export must contain at least one team and one user")
@@ -100,6 +206,8 @@ class ExportValidationService:
             channel_count=channel_count,
             user_count=user_count,
             post_count=post_count,
+            direct_channel_count=direct_channel_count,
+            direct_post_count=direct_post_count,
             team_slugs=frozenset(team_slugs),
             user_slugs=frozenset(user_slugs),
         )
@@ -108,81 +216,460 @@ class ExportValidationService:
 class MattermostRecordService:
     """Convert validated source records into Mattermost bulk import objects."""
 
-    def __init__(self, config: ParserConfig):
+    def __init__(self, config: ParserConfig, metrics: ParserMetrics | None = None):
         self._config = config
+        self._metrics = metrics
+        self._mappings_built = False
+        self._team_slugs = SlugRegistry()
+        self._user_slugs = SlugRegistry()
+        self._channel_registries: dict[str, SlugRegistry] = {}
+        self._team_slug_map: dict[str, str] = {}
+        self._channel_slug_map: dict[tuple[str, str], str] = {}
+        self._user_slug_map: dict[str, str] = {}
 
-    def iter_records(self, source: TeamsExportSource) -> Iterator[dict[str, Any]]:
+    def _build_mappings(self, source: TeamsExportSource | TeamsExport) -> None:
+        source = _coerce_source(source)
+        if self._mappings_built:
+            return
+
+        # 1. Users
+        for user in source.iter_users():
+            if self._config.anonymize:
+                resolved_user = stable_alias(user.username)
+            else:
+                resolved_user = self._user_slugs.make_unique(user.username)
+            self._user_slug_map[user.username] = resolved_user
+
+        # 2. Teams and Channels
+        for team in source.iter_teams():
+            resolved_team = self._team_slugs.make_unique(team.name)
+            self._team_slug_map[team.name] = resolved_team
+            self._channel_registries[resolved_team] = SlugRegistry()
+
+            for channel in team.channels:
+                resolved_channel = self._channel_registries[resolved_team].make_unique(channel.name)
+                self._channel_slug_map[(team.name, channel.name)] = resolved_channel
+
+        self._mappings_built = True
+
+    def _resolve_memberships(
+        self, source: TeamsExportSource | TeamsExport
+    ) -> dict[str, dict[str, Any]]:
+        source = _coerce_source(source)
+        memberships: dict[str, dict[str, Any]] = {}
+
+        # Initialize explicit users
+        for user in source.iter_users():
+            memberships[user.username] = {
+                "teams": {t_name: {"roles": ["team_user"], "channels": {}} for t_name in user.teams}
+            }
+
+        # Resolve memberships based on teams & channels records
+        for team in source.iter_teams():
+            t_name = team.name
+            all_team_members = set(team.members) | set(team.owners)
+            # Also include users who had user.teams referencing this team
+            for u_username, u_data in memberships.items():
+                if t_name in u_data["teams"]:
+                    all_team_members.add(u_username)
+            for channel in team.channels:
+                if channel.is_private:
+                    all_team_members.update(channel.members)
+                    all_team_members.update(channel.owners)
+                else:
+                    all_team_members.update(channel.members)
+                    all_team_members.update(channel.owners)
+
+            for member in all_team_members:
+                if member not in memberships:
+                    memberships[member] = {"teams": {}}
+                if t_name not in memberships[member]["teams"]:
+                    memberships[member]["teams"][t_name] = {"roles": ["team_user"], "channels": {}}
+
+                # Assign roles
+                if member in team.owners:
+                    memberships[member]["teams"][t_name]["roles"] = ["team_admin", "team_user"]
+                else:
+                    memberships[member]["teams"][t_name]["roles"] = ["team_user"]
+
+                # Resolve channel memberships
+                for channel in team.channels:
+                    c_name = channel.name
+                    explicit_members = set(channel.members) | set(channel.owners)
+                    belongs = True if not channel.is_private else member in explicit_members
+
+                    if belongs:
+                        c_roles = ["channel_user"]
+                        if member in channel.owners:
+                            c_roles = ["channel_admin", "channel_user"]
+                        memberships[member]["teams"][t_name]["channels"][c_name] = c_roles
+
+        return memberships
+
+    def _process_attachment(
+        self, attachment: AttachmentRecord, input_dir: Path, output_dir: Path
+    ) -> str | None:
+        """Copy local file or download remote attachment to output attachments directory."""
+        h = hashlib.sha256(attachment.path.encode("utf-8")).hexdigest()[:8]
+        orig_name = Path(attachment.path).name
+        # Sanitize filename
+        safe_orig_name = re.sub(r"[^a-zA-Z0-9.-]+", "_", orig_name)
+        if not safe_orig_name:
+            safe_orig_name = "file"
+        safe_name = f"{h}_{safe_orig_name}"
+        dest_path = output_dir / safe_name
+
+        if dest_path.exists():
+            return f"attachments/{safe_name}"
+
+        dest_path.parent.mkdir(parents=True, exist_ok=True)
+        src = attachment.url or attachment.path
+        is_url = src.startswith("http://") or src.startswith("https://")
+        max_retries = 3
+        backoff = 1.0
+
+        for attempt in range(1, max_retries + 1):
+            try:
+                if is_url:
+                    req = urllib.request.Request(src, headers={"User-Agent": "TMMP-Parser/1.0"})
+                    with (
+                        urllib.request.urlopen(req, timeout=10) as response,
+                        open(dest_path, "wb") as out_file,
+                    ):
+                        shutil.copyfileobj(response, out_file)
+                else:
+                    src_path = Path(src)
+                    if not src_path.is_absolute():
+                        src_path = input_dir / src_path
+                    if not src_path.exists():
+                        raise FileNotFoundError(f"Local file {src_path} does not exist")
+                    shutil.copy2(src_path, dest_path)
+                if self._metrics:
+                    self._metrics.observe_attachment("success")
+                return f"attachments/{safe_name}"
+            except Exception as exc:
+                LOGGER.warning(
+                    f"Attempt {attempt}/{max_retries} failed to process attachment {src}: {exc}"
+                )
+                if attempt < max_retries:
+                    time.sleep(backoff * (2 ** (attempt - 1)))
+                else:
+                    if self._metrics:
+                        self._metrics.observe_attachment("failed")
+                    LOGGER.error(
+                        f"Failed to process attachment {src} after {max_retries} attempts: {exc}",
+                        extra={
+                            "event": "attachment_failed",
+                            "details": {"src": src, "error": str(exc)},
+                        },
+                    )
+        return None
+
+    def _source_post_key(
+        self, team: TeamRecord, channel: ChannelRecord, post: PostRecord, index: int
+    ) -> str:
+        if post.id:
+            return post.id
+        payload = "|".join(
+            (
+                team.name,
+                channel.name,
+                str(index),
+                str(post.timestamp_ms),
+                post.username,
+                post.message,
+            )
+        )
+        digest = hashlib.sha1(payload.encode("utf-8")).hexdigest()[:12]
+        return f"source-post-{digest}"
+
+    def _post_import_id(self, team: TeamRecord, channel: ChannelRecord, source_key: str) -> str:
+        payload = "|".join(
+            (
+                self._team_slug_map[team.name],
+                self._channel_slug_map[(team.name, channel.name)],
+                source_key,
+            )
+        )
+        digest = hashlib.sha1(payload.encode("utf-8")).hexdigest()[:12]
+        return f"post-{digest}"
+
+    def _direct_post_id(self, dc: DirectChannelRecord, post: PostRecord, index: int) -> str:
+        payload = "|".join(
+            (
+                ",".join(sorted(dc.members)),
+                str(index),
+                str(post.timestamp_ms),
+                post.username,
+                post.message,
+            )
+        )
+        digest = hashlib.sha1(payload.encode("utf-8")).hexdigest()[:12]
+        return f"direct-post-{digest}"
+
+    def _resolve_thread_root_key(self, source_key: str, parent_map: dict[str, str]) -> str:
+        current = source_key
+        seen: set[str] = {source_key}
+        while True:
+            parent = parent_map.get(current)
+            if not parent or parent in seen:
+                return current
+            seen.add(parent)
+            current = parent
+
+    def iter_records(self, source: TeamsExportSource | TeamsExport) -> Iterator[dict[str, Any]]:
+        source = _coerce_source(source)
+        self._build_mappings(source)
         yield {"type": RECORD_TYPE_VERSION, "version": 1}
         yield from self.iter_team_records(source)
         yield from self.iter_channel_records(source)
         yield from self.iter_user_records(source)
         yield from self.iter_post_records(source)
+        yield from self.iter_direct_channel_records(source)
+        yield from self.iter_direct_post_records(source)
 
-    def iter_team_records(self, source: TeamsExportSource) -> Iterator[dict[str, Any]]:
+    def iter_team_records(
+        self, source: TeamsExportSource | TeamsExport
+    ) -> Iterator[dict[str, Any]]:
+        source = _coerce_source(source)
+        self._build_mappings(source)
         for team in source.iter_teams():
             yield {
                 "type": RECORD_TYPE_TEAM,
                 "team": {
-                    "name": slugify(team.name),
+                    "name": self._team_slug_map[team.name],
                     "display_name": team.display_name,
                     "description": team.description,
                     "type": "O",
                 },
             }
 
-    def iter_channel_records(self, source: TeamsExportSource) -> Iterator[dict[str, Any]]:
+    def iter_channel_records(
+        self, source: TeamsExportSource | TeamsExport
+    ) -> Iterator[dict[str, Any]]:
+        source = _coerce_source(source)
+        self._build_mappings(source)
         for team in source.iter_teams():
+            team_slug = self._team_slug_map[team.name]
             for channel in team.channels:
                 yield {
                     "type": RECORD_TYPE_CHANNEL,
                     "channel": {
-                        "team": slugify(team.name),
-                        "name": slugify(channel.name),
+                        "team": team_slug,
+                        "name": self._channel_slug_map[(team.name, channel.name)],
                         "display_name": channel.display_name,
                         "header": f"Migrated from Teams: {channel.display_name}",
                         "type": "P" if channel.is_private else "O",
                     },
                 }
 
-    def iter_user_records(self, source: TeamsExportSource) -> Iterator[dict[str, Any]]:
+    def iter_user_records(
+        self, source: TeamsExportSource | TeamsExport
+    ) -> Iterator[dict[str, Any]]:
+        source = _coerce_source(source)
+        self._build_mappings(source)
+        memberships = self._resolve_memberships(source)
+
         for user in source.iter_users():
             username = self._normalize_username(user.username)
+            user_data: dict[str, Any] = {
+                "username": username,
+                "email": self._normalize_email(user, username),
+                "nickname": "Anonymized User" if self._config.anonymize else user.nickname,
+            }
+
+            if self._config.auth_service:
+                user_data["auth_service"] = self._config.auth_service
+                if self._config.auth_data_field == "email":
+                    user_data["auth_data"] = user.email
+                else:
+                    user_data["auth_data"] = username
+            else:
+                # In standard password mode, we assign password only if configured to do so
+                # to satisfy default settings/backward-compatibility tests, but otherwise omit.
+                if self._config.default_password.get_secret_value():
+                    user_data["password"] = self._config.default_password.get_secret_value()
+
+            # Map resolved memberships with roles and channels
+            user_membership_data = memberships.get(user.username, {}).get("teams", {})
+            teams_list: list[dict[str, Any]] = []
+            for t_name, t_info in user_membership_data.items():
+                channels_list: list[dict[str, Any]] = []
+                for c_name, c_roles in t_info["channels"].items():
+                    channels_list.append(
+                        {
+                            "name": self._channel_slug_map.get((t_name, c_name), slugify(c_name)),
+                            "roles": c_roles,
+                        }
+                    )
+                teams_list.append(
+                    {
+                        "name": self._team_slug_map.get(t_name, slugify(t_name)),
+                        "roles": t_info["roles"],
+                        "channels": channels_list,
+                    }
+                )
+            user_data["teams"] = teams_list
+
             yield {
                 "type": RECORD_TYPE_USER,
-                "user": {
-                    "username": username,
-                    "email": self._normalize_email(user, username),
-                    "nickname": "Anonymized User" if self._config.anonymize else user.nickname,
-                    "auth_service": "",
-                    "password": self._config.default_password.get_secret_value(),
-                    "teams": [
-                        {"name": slugify(team_name), "roles": ["team_user"]}
-                        for team_name in user.teams
-                    ],
+                "user": user_data,
+            }
+
+    def iter_post_records(
+        self, source: TeamsExportSource | TeamsExport
+    ) -> Iterator[dict[str, Any]]:
+        source = _coerce_source(source)
+        for team in source.iter_teams():
+            for channel in team.channels:
+                yield from self._render_channel_posts(team, channel, source)
+
+    def _render_channel_posts(
+        self, team: TeamRecord, channel: ChannelRecord, source: TeamsExportSource | TeamsExport
+    ) -> Iterator[dict[str, Any]]:
+        self._build_mappings(source)  # Ensure mappings are built
+        input_dir = self._config.input_path.parent
+        output_dir = self._config.output_path.parent / "attachments"
+        usernames = list(self._user_slug_map.keys())
+        anonymizer = AnonymizerPipeline(usernames=usernames if self._config.anonymize else [])
+        post_entries: list[tuple[int, PostRecord, str]] = []
+        parent_map: dict[str, str] = {}
+        for index, post in enumerate(channel.posts):
+            source_key = self._source_post_key(team, channel, post, index)
+            post_entries.append((index, post, source_key))
+            if post.parent_id:
+                parent_map[source_key] = post.parent_id
+
+        root_map = {
+            source_key: self._resolve_thread_root_key(source_key, parent_map)
+            for _, _, source_key in post_entries
+        }
+        root_timestamps: dict[str, int] = {}
+        for _, post, source_key in post_entries:
+            if root_map[source_key] == source_key:
+                root_timestamps[source_key] = post.timestamp_ms
+
+        import_ids = {
+            source_key: self._post_import_id(team, channel, source_key)
+            for _, _, source_key in post_entries
+        }
+
+        def sort_key(entry: tuple[int, PostRecord, str]) -> tuple[int, str, int, int, int, str]:
+            index, post, source_key = entry
+            root_key = root_map[source_key]
+            root_timestamp = root_timestamps.get(root_key, post.timestamp_ms)
+            return (
+                root_timestamp,
+                root_key,
+                0 if source_key == root_key else 1,
+                post.timestamp_ms,
+                index,
+                source_key,
+            )
+
+        for _index, post, source_key in sorted(post_entries, key=sort_key):
+            post_data: dict[str, Any] = {
+                "id": import_ids[source_key],
+                "team": self._team_slug_map[team.name],
+                "channel": self._channel_slug_map[(team.name, channel.name)],
+                "user": self._normalize_username(post.username),
+                "message": anonymizer.anonymize(post.message)
+                if self._config.anonymize
+                else post.message,
+                "create_at": post.timestamp_ms,
+            }
+
+            if post.parent_id:
+                root_key = root_map[source_key]
+                root_import_id = import_ids.get(root_key)
+                if root_import_id and root_import_id != import_ids[source_key]:
+                    post_data["root_id"] = root_import_id
+                else:
+                    LOGGER.warning(
+                        "unresolved reply chain encountered while rendering channel posts",
+                        extra={
+                            "event": "orphan_reply",
+                            "details": {
+                                "team": team.name,
+                                "channel": channel.name,
+                                "post_id": post.id,
+                                "parent_id": post.parent_id,
+                            },
+                        },
+                    )
+
+            if post.attachments:
+                attachments_list = []
+                file_ids: list[str] = []
+                for att in post.attachments:
+                    rel_path = self._process_attachment(att, input_dir, output_dir)
+                    if rel_path:
+                        file_id = Path(rel_path).name
+                        file_ids.append(file_id)
+                        attachments_list.append({"path": rel_path, "file_id": file_id})
+                if attachments_list:
+                    post_data["attachments"] = attachments_list
+                    post_data["file_ids"] = file_ids
+
+            yield {
+                "type": RECORD_TYPE_POST,
+                "post": post_data,
+            }
+
+    def iter_direct_channel_records(
+        self, source: TeamsExportSource | TeamsExport
+    ) -> Iterator[dict[str, Any]]:
+        source = _coerce_source(source)
+        self._build_mappings(source)
+        for dc in source.iter_direct_channels():
+            normalized_members = [self._normalize_username(m) for m in dc.members]
+            yield {
+                "type": "direct_channel",
+                "direct_channel": {
+                    "members": normalized_members,
                 },
             }
 
-    def iter_post_records(self, source: TeamsExportSource) -> Iterator[dict[str, Any]]:
-        for team in source.iter_teams():
-            for channel in team.channels:
-                yield from self._render_channel_posts(team, channel)
-
-    def _render_channel_posts(
-        self, team: TeamRecord, channel: ChannelRecord
+    def iter_direct_post_records(
+        self, source: TeamsExportSource | TeamsExport
     ) -> Iterator[dict[str, Any]]:
-        for post in sorted(channel.posts, key=lambda item: item.timestamp_ms):
-            yield {
-                "type": RECORD_TYPE_POST,
-                "post": {
-                    "team": slugify(team.name),
-                    "channel": slugify(channel.name),
+        source = _coerce_source(source)
+        self._build_mappings(source)
+        input_dir = self._config.input_path.parent
+        output_dir = self._config.output_path.parent / "attachments"
+        usernames = list(self._user_slug_map.keys())
+        anonymizer = AnonymizerPipeline(usernames=usernames if self._config.anonymize else [])
+
+        for dc in source.iter_direct_channels():
+            normalized_members = [self._normalize_username(m) for m in dc.members]
+            for index, post in enumerate(sorted(dc.posts, key=lambda item: item.timestamp_ms)):
+                post_data = {
+                    "id": self._direct_post_id(dc, post, index),
+                    "channel_members": normalized_members,
                     "user": self._normalize_username(post.username),
-                    "message": scrub_message(post.message)
+                    "message": anonymizer.anonymize(post.message)
                     if self._config.anonymize
                     else post.message,
                     "create_at": post.timestamp_ms,
-                },
-            }
+                }
+
+                if post.attachments:
+                    attachments_list = []
+                    file_ids: list[str] = []
+                    for att in post.attachments:
+                        rel_path = self._process_attachment(att, input_dir, output_dir)
+                        if rel_path:
+                            file_id = Path(rel_path).name
+                            file_ids.append(file_id)
+                            attachments_list.append({"path": rel_path, "file_id": file_id})
+                    if attachments_list:
+                        post_data["attachments"] = attachments_list
+                        post_data["file_ids"] = file_ids
+
+                yield {
+                    "type": "direct_post",
+                    "direct_post": post_data,
+                }
 
     def _normalize_email(self, user: UserRecord, username: str) -> str:
         if self._config.anonymize:
@@ -190,6 +677,8 @@ class MattermostRecordService:
         return str(user.email).strip().lower()
 
     def _normalize_username(self, username: str) -> str:
+        if username in self._user_slug_map:
+            return self._user_slug_map[username]
         if self._config.anonymize:
             return stable_alias(username)
         return slugify(username)

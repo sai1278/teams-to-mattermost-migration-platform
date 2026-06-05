@@ -53,6 +53,17 @@ class ParserMetrics:
             labelnames=("error_type",),
             registry=self._registry,
         )
+        self._attachments_total = Counter(
+            "tmmp_parser_attachments_processed_total",
+            "Total processed attachments grouped by status.",
+            labelnames=("status",),
+            registry=self._registry,
+        )
+        self._checkpoint_resumes_total = Counter(
+            "tmmp_parser_checkpoint_resumes_total",
+            "Total times the parser resumed execution from a checkpoint.",
+            registry=self._registry,
+        )
 
     def observe_input_bytes(self, input_bytes: int) -> None:
         self._input_bytes_total.set(input_bytes)
@@ -72,6 +83,12 @@ class ParserMetrics:
     def mark_failure(self, error_type: str) -> None:
         self._runs_total.labels(status="failed").inc()
         self._failures_total.labels(error_type=error_type).inc()
+
+    def observe_attachment(self, status: str) -> None:
+        self._attachments_total.labels(status=status).inc()
+
+    def observe_checkpoint_resume(self) -> None:
+        self._checkpoint_resumes_total.inc()
 
     def publish(self) -> None:
         metrics_path = self._config.metrics_output_path

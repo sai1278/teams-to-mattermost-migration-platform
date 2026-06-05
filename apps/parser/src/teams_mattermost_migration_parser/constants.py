@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Final
 
 DEFAULT_BATCH_SIZE: Final[int] = 500
-DEFAULT_DEFAULT_PASSWORD: Final[str] = "TemporarySecurePassword123!"
+DEFAULT_DEFAULT_PASSWORD: Final[str] = ""
 DEFAULT_METRICS_OUTPUT_PATH: Final[str] = "artifacts/metrics/parser.prom"
 DEFAULT_OTEL_SERVICE_NAME: Final[str] = "teams-mattermost-migration-parser"
 

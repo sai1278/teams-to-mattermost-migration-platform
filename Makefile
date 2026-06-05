@@ -66,10 +66,10 @@ verify:
 	bash ./scripts/verification/verify-migration-state.sh
 
 test:
-	PYTHONPATH=apps/parser/src $(PYTHON) -m pytest
+	PYTHONPATH=apps/parser/src $(PYTHON) -m pytest --no-cov
 
 coverage:
-	PYTHONPATH=apps/parser/src $(PYTHON) -m pytest
+	PYTHONPATH=apps/parser/src $(PYTHON) -m pytest --cov=teams_mattermost_migration_parser --cov-report=term-missing --cov-report=html --cov-report=xml
 
 typecheck:
 	PYTHONPATH=apps/parser/src $(PYTHON) -m mypy apps/parser/src apps/parser/tests tests conftest.py

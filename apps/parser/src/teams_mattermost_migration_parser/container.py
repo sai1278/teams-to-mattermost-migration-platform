@@ -14,12 +14,18 @@ def build_pipeline(config: ParserConfig) -> TransformationPipeline:
     """Build the default pipeline graph for CLI execution."""
 
     source = TeamsExportFileGateway(config.input_path)
-    writer = JsonlFileWriter(config.output_path, batch_size=config.batch_size)
+
+    resume_append = False
+    if config.resume and config.checkpoint_path and config.checkpoint_path.exists():
+        resume_append = True
+
+    metrics = ParserMetrics(config)
+    writer = JsonlFileWriter(config.output_path, batch_size=config.batch_size, append=resume_append)
 
     return TransformationPipeline(
         config=config,
-        metrics=ParserMetrics(config),
-        record_service=MattermostRecordService(config),
+        metrics=metrics,
+        record_service=MattermostRecordService(config, metrics=metrics),
         source=source,
         validator=ExportValidationService(config),
         writer=writer,

@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Iterator, Mapping
 from typing import Any, Protocol
 
-from ..domain.models import TeamRecord, TeamsExport, UserRecord
+from ..domain.models import DirectChannelRecord, TeamRecord, TeamsExport, UserRecord
 
 
 class TeamsExportSource(Protocol):
@@ -16,6 +16,9 @@ class TeamsExportSource(Protocol):
 
     def iter_users(self) -> Iterator[UserRecord]:
         """Yield user records from the export source."""
+
+    def iter_direct_channels(self) -> Iterator[DirectChannelRecord]:
+        """Yield direct message channel records from the export source."""
 
     def input_size_bytes(self) -> int:
         """Return the raw size of the input payload in bytes."""

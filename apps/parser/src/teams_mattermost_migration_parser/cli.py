@@ -51,7 +51,10 @@ def build_parser(defaults: ParserEnvironmentDefaults) -> argparse.ArgumentParser
     parser.add_argument(
         "--default-password",
         default=defaults.default_password.get_secret_value(),
-        help="Password assigned to imported local users.",
+        help=(
+            "Optional temporary password assigned only when password-based "
+            "imports are explicitly enabled."
+        ),
     )
     parser.add_argument(
         "--fail-on-empty-export",
@@ -80,6 +83,28 @@ def build_parser(defaults: ParserEnvironmentDefaults) -> argparse.ArgumentParser
         default=defaults.otel_service_name,
         help="Service name used in structured logs and future OTEL exporters.",
     )
+    parser.add_argument(
+        "--auth-service",
+        default=defaults.auth_service,
+        help="SSO authentication service (e.g. saml, gitlab).",
+    )
+    parser.add_argument(
+        "--auth-data-field",
+        default=defaults.auth_data_field,
+        help="Field to use for SSO auth_data (email or username).",
+    )
+    parser.add_argument(
+        "--checkpoint-path",
+        type=Path,
+        default=defaults.checkpoint_path,
+        help="State file path for resuming migrations.",
+    )
+    parser.add_argument(
+        "--resume",
+        action=argparse.BooleanOptionalAction,
+        default=defaults.resume,
+        help="Resume migration from checkpoint if file exists.",
+    )
     return parser
 
 
@@ -100,6 +125,10 @@ def main() -> int:
         metrics_pushgateway_url=args.metrics_pushgateway_url,
         otel_service_name=args.otel_service_name,
         output_path=args.output,
+        auth_service=args.auth_service,
+        auth_data_field=args.auth_data_field,
+        checkpoint_path=args.checkpoint_path,
+        resume=args.resume,
     )
     config.ensure_output_parent()
 

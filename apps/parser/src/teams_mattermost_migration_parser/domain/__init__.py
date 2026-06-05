@@ -2,9 +2,10 @@
 
 from .exceptions import ConfigurationError, InputValidationError, ParserError, SourceReadError
 from .models import ChannelRecord, PostRecord, TeamRecord, TeamsExport, UserRecord
-from .normalization import scrub_message, slugify, stable_alias
+from .normalization import AnonymizerPipeline, scrub_message, slugify, stable_alias
 
 __all__ = [
+    "AnonymizerPipeline",
     "ChannelRecord",
     "ConfigurationError",
     "InputValidationError",

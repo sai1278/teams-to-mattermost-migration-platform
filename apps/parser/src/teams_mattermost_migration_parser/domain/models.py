@@ -11,10 +11,19 @@ class ImmutableModel(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
 
+class AttachmentRecord(ImmutableModel):
+    name: str
+    path: str
+    url: str | None = None
+
+
 class PostRecord(ImmutableModel):
     username: str
     message: str
     timestamp_ms: int = Field(ge=0)
+    id: str | None = None
+    parent_id: str | None = None
+    attachments: tuple[AttachmentRecord, ...] = ()
 
 
 class ChannelRecord(ImmutableModel):
@@ -22,6 +31,8 @@ class ChannelRecord(ImmutableModel):
     display_name: str
     is_private: bool = False
     posts: tuple[PostRecord, ...] = ()
+    members: tuple[str, ...] = ()
+    owners: tuple[str, ...] = ()
 
 
 class TeamRecord(ImmutableModel):
@@ -29,6 +40,8 @@ class TeamRecord(ImmutableModel):
     display_name: str
     description: str = ""
     channels: tuple[ChannelRecord, ...] = ()
+    members: tuple[str, ...] = ()
+    owners: tuple[str, ...] = ()
 
 
 class UserRecord(ImmutableModel):
@@ -38,6 +51,12 @@ class UserRecord(ImmutableModel):
     teams: tuple[str, ...] = ()
 
 
+class DirectChannelRecord(ImmutableModel):
+    members: tuple[str, ...]
+    posts: tuple[PostRecord, ...] = ()
+
+
 class TeamsExport(ImmutableModel):
     teams: tuple[TeamRecord, ...]
     users: tuple[UserRecord, ...]
+    direct_channels: tuple[DirectChannelRecord, ...] = ()

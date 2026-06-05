@@ -12,7 +12,7 @@ import ijson
 from pydantic import BaseModel, ValidationError
 
 from ..domain.exceptions import InputValidationError, SourceReadError
-from ..domain.models import TeamRecord, TeamsExport, UserRecord
+from ..domain.models import DirectChannelRecord, TeamRecord, TeamsExport, UserRecord
 
 ModelT = TypeVar("ModelT", bound=BaseModel)
 
@@ -29,6 +29,9 @@ class TeamsExportFileGateway:
     def iter_users(self) -> Iterator[UserRecord]:
         yield from self._iter_items("users.item", UserRecord)
 
+    def iter_direct_channels(self) -> Iterator[DirectChannelRecord]:
+        yield from self._iter_items("direct_channels.item", DirectChannelRecord)
+
     def input_size_bytes(self) -> int:
         try:
             return self._input_path.stat().st_size
@@ -36,7 +39,11 @@ class TeamsExportFileGateway:
             raise SourceReadError(f"could not stat input file: {self._input_path}") from exc
 
     def materialize(self) -> TeamsExport:
-        return TeamsExport(teams=tuple(self.iter_teams()), users=tuple(self.iter_users()))
+        return TeamsExport(
+            teams=tuple(self.iter_teams()),
+            users=tuple(self.iter_users()),
+            direct_channels=tuple(self.iter_direct_channels()),
+        )
 
     def _iter_items(self, prefix: str, model_class: type[ModelT]) -> Iterator[ModelT]:
         if not self._input_path.exists():

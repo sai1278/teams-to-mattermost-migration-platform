@@ -10,7 +10,7 @@ from .application.pipeline import PipelineResult
 from .application.services import MattermostRecordService
 from .config import ParserConfig
 from .container import build_pipeline
-from .domain.models import TeamRecord, TeamsExport, UserRecord
+from .domain.models import DirectChannelRecord, TeamRecord, TeamsExport, UserRecord
 from .infrastructure.readers import TeamsExportFileGateway
 from .infrastructure.writers import JsonlFileWriter
 
@@ -61,6 +61,9 @@ class _InMemorySource:
 
     def iter_users(self) -> Iterator[UserRecord]:
         return iter(self._export.users)
+
+    def iter_direct_channels(self) -> Iterator[DirectChannelRecord]:
+        return iter(self._export.direct_channels)
 
     def input_size_bytes(self) -> int:
         return 0
