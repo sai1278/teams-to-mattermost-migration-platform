@@ -308,6 +308,61 @@ def test_direct_messages_migration_preserves_participants_and_order(tmp_path: Pa
     assert all(post["id"].startswith("direct-post-") for post in direct_posts)
 
 
+def test_group_dm_migration_preserves_all_participants(tmp_path: Path) -> None:
+    export = TeamsExport(
+        users=(
+            UserRecord(
+                username="john-doe",
+                email="john.doe@company.com",
+                nickname="John Doe",
+                teams=(),
+            ),
+            UserRecord(
+                username="sarah-khan",
+                email="sarah@company.com",
+                nickname="Sarah Khan",
+                teams=(),
+            ),
+            UserRecord(
+                username="admin-user",
+                email="admin@company.com",
+                nickname="Admin",
+                teams=(),
+            ),
+        ),
+        teams=(),
+        direct_channels=(
+            DirectChannelRecord(
+                members=("john-doe", "sarah-khan", "admin-user"),
+                posts=(
+                    PostRecord(
+                        username="admin-user",
+                        message="Group DM hello",
+                        timestamp_ms=1_000,
+                    ),
+                    PostRecord(
+                        username="sarah-khan",
+                        message="Group DM reply",
+                        timestamp_ms=2_000,
+                    ),
+                ),
+            ),
+        ),
+    )
+
+    service = MattermostRecordService(_config(tmp_path))
+    records = list(service.iter_records(export))
+
+    direct_channel = next(
+        record["direct_channel"] for record in records if record["type"] == "direct_channel"
+    )
+    direct_posts = [record["direct_post"] for record in records if record["type"] == "direct_post"]
+
+    assert direct_channel["members"] == ["john-doe", "sarah-khan", "admin-user"]
+    assert [post["message"] for post in direct_posts] == ["Group DM hello", "Group DM reply"]
+    assert all(post["id"].startswith("direct-post-") for post in direct_posts)
+
+
 def test_attachment_processing_copies_files_and_reports_missing_file(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:

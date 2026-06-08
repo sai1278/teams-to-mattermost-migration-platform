@@ -26,7 +26,9 @@ from teams_mattermost_migration_parser.domain.exceptions import (
     SourceReadError,
 )
 from teams_mattermost_migration_parser.domain.models import (
+    ChannelRecord,
     DirectChannelRecord,
+    PostRecord,
     TeamRecord,
     TeamsExport,
     UserRecord,
@@ -133,6 +135,53 @@ def test_in_memory_source_helpers_expose_export() -> None:
 
     assert source.input_size_bytes() == 0
     assert source.materialize() is export
+
+
+def test_large_export_batches_and_writes_all_records(tmp_path: Path) -> None:
+    posts = tuple(
+        PostRecord(
+            username="john-doe",
+            message=f"message-{index}",
+            timestamp_ms=1_000 + index,
+        )
+        for index in range(250)
+    )
+    export = TeamsExport(
+        teams=(
+            TeamRecord(
+                name="it-team",
+                display_name="IT Team",
+                channels=(
+                    ChannelRecord(
+                        name="general",
+                        display_name="General",
+                        posts=posts,
+                    ),
+                ),
+            ),
+        ),
+        users=(
+            UserRecord(
+                username="john-doe",
+                email="john.doe@company.com",
+                nickname="John Doe",
+                teams=("it-team",),
+            ),
+        ),
+        direct_channels=(),
+    )
+    config = _config(tmp_path, batch_size=17)
+
+    record_count = TeamsExportTransformer(config).write_records(export)
+    rendered = [
+        json.loads(line) for line in config.output_path.read_text(encoding="utf-8").splitlines()
+    ]
+
+    assert record_count == 254
+    assert len(rendered) == 254
+    assert rendered[0]["type"] == "version"
+    assert rendered[-1]["type"] == "post"
+    assert rendered[-1]["post"]["message"] == "message-249"
 
 
 def test_file_gateway_streams_and_reports_errors(tmp_path: Path) -> None:
