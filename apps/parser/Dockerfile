@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.7
 
-FROM python:3.12-slim@sha256:d8c0b296afed684f826359df3ad871891b97ad89495fc9f63567761019623259 AS builder
+FROM python:3.12-slim AS builder
 
 ENV PIP_DISABLE_PIP_VERSION_CHECK=1 \
     PIP_NO_CACHE_DIR=1 \
@@ -14,7 +14,7 @@ COPY apps/parser /build/apps/parser
 RUN python -m pip install --upgrade pip build && \
     python -m build /build/apps/parser --wheel --outdir /build/dist
 
-FROM python:3.12-slim@sha256:d8c0b296afed684f826359df3ad871891b97ad89495fc9f63567761019623259 AS runtime
+FROM python:3.12-slim AS runtime
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
