@@ -109,7 +109,10 @@ def test_mattermost_import_end_to_end(tmp_path: Path) -> None:
             capture_output=True,
             text=True,
         )
-        assert import_res.returncode == 0, f"Import failed: {import_res.stderr}\nStdout: {import_res.stdout}"
+        error_msg = (
+            f"Import failed: {import_res.stderr}\nStdout: {import_res.stdout}"
+        )
+        assert import_res.returncode == 0, error_msg
 
     finally:
         # Tear down container stack
@@ -207,7 +210,10 @@ def test_mattermost_import_idempotency(tmp_path: Path) -> None:
             capture_output=True,
             text=True,
         )
-        assert import_res.returncode == 0, f"Import 1 failed: {import_res.stderr}\nStdout: {import_res.stdout}"
+        error_msg_1 = (
+            f"Import 1 failed: {import_res.stderr}\nStdout: {import_res.stdout}"
+        )
+        assert import_res.returncode == 0, error_msg_1
 
         # Count posts in database after first import
         res = subprocess.run(
@@ -250,7 +256,10 @@ def test_mattermost_import_idempotency(tmp_path: Path) -> None:
             capture_output=True,
             text=True,
         )
-        assert import_res2.returncode == 0, f"Import 2 failed: {import_res2.stderr}\nStdout: {import_res2.stdout}"
+        error_msg_2 = (
+            f"Import 2 failed: {import_res2.stderr}\nStdout: {import_res2.stdout}"
+        )
+        assert import_res2.returncode == 0, error_msg_2
 
         # Run SQL cleanup to enforce idempotency
         subprocess.run(
@@ -268,7 +277,7 @@ def test_mattermost_import_idempotency(tmp_path: Path) -> None:
                 "-d",
                 docker_env.get("POSTGRES_DB", "mattermost"),
                 "-c",
-                "DELETE FROM posts WHERE id IN (SELECT id FROM (SELECT id, ROW_NUMBER() OVER (PARTITION BY substring(props from '\"import_id\"\\s*:\\s*\"([^\"]+)\"') ORDER BY createat ASC, id ASC) as rn FROM posts WHERE props LIKE '%\"import_id\"%') tmp WHERE rn > 1);",
+                "DELETE FROM posts WHERE id IN (SELECT id FROM (SELECT id, ROW_NUMBER() OVER (PARTITION BY substring(props from '\"import_id\"\\s*:\\s*\"([^\"]+)\"') ORDER BY createat ASC, id ASC[...]",
             ],
             check=True,
             cwd=str(COMPOSE_DIR),
