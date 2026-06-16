@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import hashlib
+import hmac
+import os
 import re
 
 from ..constants import SCRUB_KEYWORDS
@@ -20,11 +22,15 @@ def slugify(value: str) -> str:
     return slug
 
 
-def stable_alias(value: str) -> str:
-    """Generate a deterministic alias for anonymized identities."""
 
-    digest = hashlib.sha1(value.encode("utf-8")).hexdigest()[:10]
+def stable_alias(value: str, salt: bytes | None = None) -> str:
+    """Generate a deterministic alias for anonymized identities."""
+    if salt is None:
+        salt_str = os.environ.get("TMMP_ANONYMIZATION_SALT", "default-anonymization-salt-value")
+        salt = salt_str.encode("utf-8")
+    digest = hmac.new(salt, value.encode("utf-8"), hashlib.sha256).hexdigest()[:12]
     return f"user-{digest}"
+
 
 
 class AnonymizerPipeline:

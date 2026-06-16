@@ -36,6 +36,8 @@ class ParserEnvironmentDefaults(BaseSettings):
     auth_data_field: str = "email"
     checkpoint_path: Path | None = None
     resume: bool = True
+    max_chunk_mb: int = 0
+    attachment_workers: int = 4
 
 
 class ParserConfig(BaseModel):
@@ -58,6 +60,8 @@ class ParserConfig(BaseModel):
     auth_data_field: str = "email"
     checkpoint_path: Path | None = None
     resume: bool = True
+    max_chunk_mb: int = 0
+    attachment_workers: int = Field(default=4, ge=1, le=100)
 
     @field_validator("input_path")
     @classmethod
@@ -100,6 +104,8 @@ class ParserConfig(BaseModel):
         auth_data_field: str | None = None,
         checkpoint_path: Path | None = None,
         resume: bool | None = None,
+        max_chunk_mb: int | None = None,
+        attachment_workers: int | None = None,
     ) -> ParserConfig:
         defaults = ParserEnvironmentDefaults()
         resolved_output_path = Path(output_path)
@@ -135,6 +141,10 @@ class ParserConfig(BaseModel):
             else auth_data_field,
             checkpoint_path=resolved_checkpoint_path,
             resume=defaults.resume if resume is None else resume,
+            max_chunk_mb=defaults.max_chunk_mb if max_chunk_mb is None else max_chunk_mb,
+            attachment_workers=defaults.attachment_workers
+            if attachment_workers is None
+            else attachment_workers,
         )
 
     def ensure_output_parent(self) -> None:

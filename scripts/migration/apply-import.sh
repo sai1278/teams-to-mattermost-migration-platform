@@ -27,5 +27,22 @@ DEST_PATH="/tmp/import_data.jsonl"
 log_info "Applying Mattermost bulk import."
 retry_command 2 2 docker exec -i "${CONTAINER_ID}" mattermost import bulk "${DEST_PATH}" --apply
 
+log_info "Running SQL post-import cleanup to enforce idempotency."
+# We run the cleanup query to remove duplicate posts based on the import_id inside the props json.
+compose_core exec -T postgres psql -U "${POSTGRES_USER}" -d "${POSTGRES_DB}" -c "
+DELETE FROM posts 
+WHERE id IN (
+  SELECT id FROM (
+    SELECT id, ROW_NUMBER() OVER (
+      PARTITION BY substring(props from '\"import_id\"\\s*:\\s*\"([^\"]+)\"') 
+      ORDER BY createat ASC, id ASC
+    ) as rn 
+    FROM posts 
+    WHERE props LIKE '%\"import_id\"%'
+  ) tmp 
+  WHERE rn > 1
+);
+"
+
 bash "${SCRIPT_DIR}/../verification/verify-migration-state.sh"
 log_ok "Bulk import apply completed."

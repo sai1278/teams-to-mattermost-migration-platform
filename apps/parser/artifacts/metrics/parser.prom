@@ -1,0 +1,71 @@
+# HELP tmmp_parser_runs_total Total parser runs grouped by status.
+# TYPE tmmp_parser_runs_total counter
+tmmp_parser_runs_total{status="failed"} 1.0
+# HELP tmmp_parser_runs_created Total parser runs grouped by status.
+# TYPE tmmp_parser_runs_created gauge
+tmmp_parser_runs_created{status="failed"} 1.7816109380403004e+09
+# HELP tmmp_parser_records_emitted_total Total emitted Mattermost records grouped by record type.
+# TYPE tmmp_parser_records_emitted_total counter
+# HELP tmmp_parser_stage_duration_seconds Duration spent in major parser stages.
+# TYPE tmmp_parser_stage_duration_seconds histogram
+tmmp_parser_stage_duration_seconds_bucket{le="0.005",stage="schema_version_check"} 1.0
+tmmp_parser_stage_duration_seconds_bucket{le="0.01",stage="schema_version_check"} 1.0
+tmmp_parser_stage_duration_seconds_bucket{le="0.025",stage="schema_version_check"} 1.0
+tmmp_parser_stage_duration_seconds_bucket{le="0.05",stage="schema_version_check"} 1.0
+tmmp_parser_stage_duration_seconds_bucket{le="0.075",stage="schema_version_check"} 1.0
+tmmp_parser_stage_duration_seconds_bucket{le="0.1",stage="schema_version_check"} 1.0
+tmmp_parser_stage_duration_seconds_bucket{le="0.25",stage="schema_version_check"} 1.0
+tmmp_parser_stage_duration_seconds_bucket{le="0.5",stage="schema_version_check"} 1.0
+tmmp_parser_stage_duration_seconds_bucket{le="0.75",stage="schema_version_check"} 1.0
+tmmp_parser_stage_duration_seconds_bucket{le="1.0",stage="schema_version_check"} 1.0
+tmmp_parser_stage_duration_seconds_bucket{le="2.5",stage="schema_version_check"} 1.0
+tmmp_parser_stage_duration_seconds_bucket{le="5.0",stage="schema_version_check"} 1.0
+tmmp_parser_stage_duration_seconds_bucket{le="7.5",stage="schema_version_check"} 1.0
+tmmp_parser_stage_duration_seconds_bucket{le="10.0",stage="schema_version_check"} 1.0
+tmmp_parser_stage_duration_seconds_bucket{le="+Inf",stage="schema_version_check"} 1.0
+tmmp_parser_stage_duration_seconds_count{stage="schema_version_check"} 1.0
+tmmp_parser_stage_duration_seconds_sum{stage="schema_version_check"} 0.0013569999864557758
+tmmp_parser_stage_duration_seconds_bucket{le="0.005",stage="validation"} 1.0
+tmmp_parser_stage_duration_seconds_bucket{le="0.01",stage="validation"} 1.0
+tmmp_parser_stage_duration_seconds_bucket{le="0.025",stage="validation"} 1.0
+tmmp_parser_stage_duration_seconds_bucket{le="0.05",stage="validation"} 1.0
+tmmp_parser_stage_duration_seconds_bucket{le="0.075",stage="validation"} 1.0
+tmmp_parser_stage_duration_seconds_bucket{le="0.1",stage="validation"} 1.0
+tmmp_parser_stage_duration_seconds_bucket{le="0.25",stage="validation"} 1.0
+tmmp_parser_stage_duration_seconds_bucket{le="0.5",stage="validation"} 1.0
+tmmp_parser_stage_duration_seconds_bucket{le="0.75",stage="validation"} 1.0
+tmmp_parser_stage_duration_seconds_bucket{le="1.0",stage="validation"} 1.0
+tmmp_parser_stage_duration_seconds_bucket{le="2.5",stage="validation"} 1.0
+tmmp_parser_stage_duration_seconds_bucket{le="5.0",stage="validation"} 1.0
+tmmp_parser_stage_duration_seconds_bucket{le="7.5",stage="validation"} 1.0
+tmmp_parser_stage_duration_seconds_bucket{le="10.0",stage="validation"} 1.0
+tmmp_parser_stage_duration_seconds_bucket{le="+Inf",stage="validation"} 1.0
+tmmp_parser_stage_duration_seconds_count{stage="validation"} 1.0
+tmmp_parser_stage_duration_seconds_sum{stage="validation"} 0.0010320000001229346
+# HELP tmmp_parser_stage_duration_seconds_created Duration spent in major parser stages.
+# TYPE tmmp_parser_stage_duration_seconds_created gauge
+tmmp_parser_stage_duration_seconds_created{stage="schema_version_check"} 1.7816109380372581e+09
+tmmp_parser_stage_duration_seconds_created{stage="validation"} 1.781610938039265e+09
+# HELP tmmp_parser_input_bytes Size of the input export processed by the parser.
+# TYPE tmmp_parser_input_bytes gauge
+tmmp_parser_input_bytes 640.0
+# HELP tmmp_parser_records_per_second Observed parser throughput for the latest successful run.
+# TYPE tmmp_parser_records_per_second gauge
+tmmp_parser_records_per_second 0.0
+# HELP tmmp_parser_last_run_records_total Number of records emitted during the latest successful run.
+# TYPE tmmp_parser_last_run_records_total gauge
+tmmp_parser_last_run_records_total 0.0
+# HELP tmmp_parser_failures_total Total parser failures grouped by error type.
+# TYPE tmmp_parser_failures_total counter
+tmmp_parser_failures_total{error_type="InputValidationError"} 1.0
+# HELP tmmp_parser_failures_created Total parser failures grouped by error type.
+# TYPE tmmp_parser_failures_created gauge
+tmmp_parser_failures_created{error_type="InputValidationError"} 1.7816109380403004e+09
+# HELP tmmp_parser_attachments_processed_total Total processed attachments grouped by status.
+# TYPE tmmp_parser_attachments_processed_total counter
+# HELP tmmp_parser_checkpoint_resumes_total Total times the parser resumed execution from a checkpoint.
+# TYPE tmmp_parser_checkpoint_resumes_total counter
+tmmp_parser_checkpoint_resumes_total 0.0
+# HELP tmmp_parser_checkpoint_resumes_created Total times the parser resumed execution from a checkpoint.
+# TYPE tmmp_parser_checkpoint_resumes_created gauge
+tmmp_parser_checkpoint_resumes_created 1.781610938034244e+09

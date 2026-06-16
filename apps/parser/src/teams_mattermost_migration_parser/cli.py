@@ -8,7 +8,7 @@ from pathlib import Path
 
 from .config import ParserConfig, ParserEnvironmentDefaults
 from .container import build_pipeline
-from .observability import configure_logging, set_correlation_id
+from .observability import configure_logging, set_correlation_id, setup_telemetry
 
 LOGGER = logging.getLogger("teams_mattermost_migration_parser")
 
@@ -47,14 +47,6 @@ def build_parser(defaults: ParserEnvironmentDefaults) -> argparse.ArgumentParser
         "--correlation-id",
         default=None,
         help="Optional correlation ID used in logs and pushed metrics.",
-    )
-    parser.add_argument(
-        "--default-password",
-        default=defaults.default_password.get_secret_value(),
-        help=(
-            "Optional temporary password assigned only when password-based "
-            "imports are explicitly enabled."
-        ),
     )
     parser.add_argument(
         "--fail-on-empty-export",
@@ -105,6 +97,18 @@ def build_parser(defaults: ParserEnvironmentDefaults) -> argparse.ArgumentParser
         default=defaults.resume,
         help="Resume migration from checkpoint if file exists.",
     )
+    parser.add_argument(
+        "--max-chunk-mb",
+        type=int,
+        default=defaults.max_chunk_mb,
+        help="Maximum size of each JSONL chunk in MB. 0 means disabled.",
+    )
+    parser.add_argument(
+        "--attachment-workers",
+        type=int,
+        default=defaults.attachment_workers,
+        help="Number of concurrent worker threads for downloading attachments.",
+    )
     return parser
 
 
@@ -117,7 +121,6 @@ def main() -> int:
         anonymize=args.anonymize,
         batch_size=args.batch_size,
         correlation_id=args.correlation_id,
-        default_password=args.default_password,
         fail_on_empty_export=args.fail_on_empty_export,
         input_path=args.input,
         log_level=args.log_level,
@@ -129,11 +132,14 @@ def main() -> int:
         auth_data_field=args.auth_data_field,
         checkpoint_path=args.checkpoint_path,
         resume=args.resume,
+        max_chunk_mb=args.max_chunk_mb,
+        attachment_workers=args.attachment_workers,
     )
     config.ensure_output_parent()
 
     set_correlation_id(config.correlation_id)
     configure_logging(config.log_level, service_name=config.otel_service_name)
+    setup_telemetry(config.otel_service_name)
 
     result = build_pipeline(config).run()
     LOGGER.info(

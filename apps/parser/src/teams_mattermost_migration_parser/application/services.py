@@ -6,9 +6,10 @@ import hashlib
 import logging
 import re
 import shutil
+import ssl
 import time
 import urllib.request
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -184,6 +185,11 @@ class ExportValidationService:
         direct_post_count = 0
         for dc in source.iter_direct_channels():
             direct_channel_count += 1
+            if len(dc.members) < 2:
+                errors.append(
+                    f"direct channel has invalid member count: "
+                    f"{len(dc.members)} (minimum 2 required)"
+                )
             for member in dc.members:
                 if slugify(member) not in user_slugs:
                     errors.append(f"direct channel member '{member}' is missing from users")
@@ -211,6 +217,66 @@ class ExportValidationService:
             team_slugs=frozenset(team_slugs),
             user_slugs=frozenset(user_slugs),
         )
+
+
+class _LazyMemberships(Mapping[str, dict[str, Any]]):
+    """Memory-efficient lazy-evaluating mapping of user memberships."""
+
+    def __init__(
+        self,
+        user_to_teams: dict[str, set[str]],
+        team_owners: dict[str, set[str]],
+        channels_by_team: dict[str, list[ChannelRecord]],
+        channel_members: dict[tuple[str, str], set[str]],
+        channel_owners: dict[tuple[str, str], set[str]],
+    ):
+        self._user_to_teams = user_to_teams
+        self._team_owners = team_owners
+        self._channels_by_team = channels_by_team
+        self._channel_members = channel_members
+        self._channel_owners = channel_owners
+
+    def __getitem__(self, key: str) -> dict[str, Any]:
+        if key not in self._user_to_teams:
+            raise KeyError(key)
+
+        teams_dict = {}
+        for t_name in self._user_to_teams[key]:
+            if key in self._team_owners.get(t_name, set()):
+                t_roles = ["team_admin", "team_user"]
+            else:
+                t_roles = ["team_user"]
+
+            channels_dict = {}
+            for channel in self._channels_by_team.get(t_name, []):
+                c_name = channel.name
+                c_owners = self._channel_owners.get((t_name, c_name), set())
+                c_members = self._channel_members.get((t_name, c_name), set())
+
+                belongs = (
+                    not channel.is_private
+                    or key in c_owners
+                    or key in c_members
+                )
+
+                if belongs:
+                    if key in c_owners:
+                        c_roles = ["channel_admin", "channel_user"]
+                    else:
+                        c_roles = ["channel_user"]
+                    channels_dict[c_name] = c_roles
+
+            teams_dict[t_name] = {
+                "roles": t_roles,
+                "channels": channels_dict,
+            }
+        return {"teams": teams_dict}
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(self._user_to_teams)
+
+    def __len__(self) -> int:
+        return len(self._user_to_teams)
 
 
 class MattermostRecordService:
@@ -254,57 +320,52 @@ class MattermostRecordService:
 
     def _resolve_memberships(
         self, source: TeamsExportSource | TeamsExport
-    ) -> dict[str, dict[str, Any]]:
+    ) -> Mapping[str, dict[str, Any]]:
         source = _coerce_source(source)
-        memberships: dict[str, dict[str, Any]] = {}
 
-        # Initialize explicit users
+        user_to_teams: dict[str, set[str]] = {}
+        team_owners: dict[str, set[str]] = {}
+        channels_by_team: dict[str, list[ChannelRecord]] = {}
+        channel_members: dict[tuple[str, str], set[str]] = {}
+        channel_owners: dict[tuple[str, str], set[str]] = {}
+
+        # 1. Initialize from explicit users
         for user in source.iter_users():
-            memberships[user.username] = {
-                "teams": {t_name: {"roles": ["team_user"], "channels": {}} for t_name in user.teams}
-            }
+            if user.teams:
+                user_to_teams.setdefault(user.username, set()).update(user.teams)
 
-        # Resolve memberships based on teams & channels records
+        # 2. Build indexes from teams & channels records
         for team in source.iter_teams():
             t_name = team.name
-            all_team_members = set(team.members) | set(team.owners)
-            # Also include users who had user.teams referencing this team
-            for u_username, u_data in memberships.items():
-                if t_name in u_data["teams"]:
-                    all_team_members.add(u_username)
+            team_owners[t_name] = set(team.owners)
+            channels_by_team[t_name] = list(team.channels)
+
+            # Explicit team members/owners
+            for u in team.owners:
+                user_to_teams.setdefault(u, set()).add(t_name)
+            for u in team.members:
+                user_to_teams.setdefault(u, set()).add(t_name)
+
             for channel in team.channels:
-                if channel.is_private:
-                    all_team_members.update(channel.members)
-                    all_team_members.update(channel.owners)
-                else:
-                    all_team_members.update(channel.members)
-                    all_team_members.update(channel.owners)
+                c_name = channel.name
+                c_owners_set = set(channel.owners)
+                c_members_set = set(channel.members)
+                channel_owners[(t_name, c_name)] = c_owners_set
+                channel_members[(t_name, c_name)] = c_members_set
 
-            for member in all_team_members:
-                if member not in memberships:
-                    memberships[member] = {"teams": {}}
-                if t_name not in memberships[member]["teams"]:
-                    memberships[member]["teams"][t_name] = {"roles": ["team_user"], "channels": {}}
+                # Any channel member/owner belongs to the team
+                for u in c_owners_set:
+                    user_to_teams.setdefault(u, set()).add(t_name)
+                for u in c_members_set:
+                    user_to_teams.setdefault(u, set()).add(t_name)
 
-                # Assign roles
-                if member in team.owners:
-                    memberships[member]["teams"][t_name]["roles"] = ["team_admin", "team_user"]
-                else:
-                    memberships[member]["teams"][t_name]["roles"] = ["team_user"]
-
-                # Resolve channel memberships
-                for channel in team.channels:
-                    c_name = channel.name
-                    explicit_members = set(channel.members) | set(channel.owners)
-                    belongs = True if not channel.is_private else member in explicit_members
-
-                    if belongs:
-                        c_roles = ["channel_user"]
-                        if member in channel.owners:
-                            c_roles = ["channel_admin", "channel_user"]
-                        memberships[member]["teams"][t_name]["channels"][c_name] = c_roles
-
-        return memberships
+        return _LazyMemberships(
+            user_to_teams=user_to_teams,
+            team_owners=team_owners,
+            channels_by_team=channels_by_team,
+            channel_members=channel_members,
+            channel_owners=channel_owners,
+        )
 
     def _process_attachment(
         self, attachment: AttachmentRecord, input_dir: Path, output_dir: Path
@@ -332,8 +393,10 @@ class MattermostRecordService:
             try:
                 if is_url:
                     req = urllib.request.Request(src, headers={"User-Agent": "TMMP-Parser/1.0"})
+                    # SEC: enforce SSL/TLS certificate validation
+                    context = ssl.create_default_context()
                     with (
-                        urllib.request.urlopen(req, timeout=10) as response,
+                        urllib.request.urlopen(req, timeout=10, context=context) as response,
                         open(dest_path, "wb") as out_file,
                     ):
                         shutil.copyfileobj(response, out_file)
@@ -420,6 +483,41 @@ class MattermostRecordService:
     def iter_records(self, source: TeamsExportSource | TeamsExport) -> Iterator[dict[str, Any]]:
         source = _coerce_source(source)
         self._build_mappings(source)
+
+        # Collect and pre-download all attachments concurrently
+        attachments_to_download = []
+        seen_attachments = set()
+        for team in source.iter_teams():
+            for channel in team.channels:
+                for post in channel.posts:
+                    for att in post.attachments:
+                        if att.path not in seen_attachments:
+                            seen_attachments.add(att.path)
+                            attachments_to_download.append(att)
+        for dc in source.iter_direct_channels():
+            for post in dc.posts:
+                for att in post.attachments:
+                    if att.path not in seen_attachments:
+                        seen_attachments.add(att.path)
+                        attachments_to_download.append(att)
+
+        if attachments_to_download:
+            input_dir = self._config.input_path.parent
+            output_dir = self._config.output_path.parent / "attachments"
+            from concurrent.futures import ThreadPoolExecutor
+
+            max_workers = getattr(self._config, "attachment_workers", 4)
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                futures = [
+                    executor.submit(self._process_attachment, att, input_dir, output_dir)
+                    for att in attachments_to_download
+                ]
+                for future in futures:
+                    try:
+                        future.result()
+                    except Exception as exc:
+                        LOGGER.warning(f"Concurrent attachment download failed: {exc}")
+
         yield {"type": RECORD_TYPE_VERSION, "version": 1}
         yield from self.iter_team_records(source)
         yield from self.iter_channel_records(source)
@@ -484,11 +582,9 @@ class MattermostRecordService:
                     user_data["auth_data"] = user.email
                 else:
                     user_data["auth_data"] = username
-            else:
-                # In standard password mode, we assign password only if configured to do so
-                # to satisfy default settings/backward-compatibility tests, but otherwise omit.
-                if self._config.default_password.get_secret_value():
-                    user_data["password"] = self._config.default_password.get_secret_value()
+            # SEC: Never export plaintext passwords to JSONL output.
+            # Password provisioning is handled by Mattermost server-side
+            # using TMMP_DEFAULT_PASSWORD env var at import time.
 
             # Map resolved memberships with roles and channels
             user_membership_data = memberships.get(user.username, {}).get("teams", {})
@@ -570,6 +666,7 @@ class MattermostRecordService:
         for _index, post, source_key in sorted(post_entries, key=sort_key):
             post_data: dict[str, Any] = {
                 "id": import_ids[source_key],
+                "import_id": import_ids[source_key],
                 "team": self._team_slug_map[team.name],
                 "channel": self._channel_slug_map[(team.name, channel.name)],
                 "user": self._normalize_username(post.username),
@@ -643,8 +740,10 @@ class MattermostRecordService:
         for dc in source.iter_direct_channels():
             normalized_members = [self._normalize_username(m) for m in dc.members]
             for index, post in enumerate(sorted(dc.posts, key=lambda item: item.timestamp_ms)):
+                post_id = self._direct_post_id(dc, post, index)
                 post_data = {
-                    "id": self._direct_post_id(dc, post, index),
+                    "id": post_id,
+                    "import_id": post_id,
                     "channel_members": normalized_members,
                     "user": self._normalize_username(post.username),
                     "message": anonymizer.anonymize(post.message)

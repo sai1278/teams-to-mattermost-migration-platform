@@ -20,7 +20,12 @@ def build_pipeline(config: ParserConfig) -> TransformationPipeline:
         resume_append = True
 
     metrics = ParserMetrics(config)
-    writer = JsonlFileWriter(config.output_path, batch_size=config.batch_size, append=resume_append)
+    writer = JsonlFileWriter(
+        config.output_path,
+        batch_size=config.batch_size,
+        append=resume_append,
+        max_chunk_mb=config.max_chunk_mb
+    )
 
     return TransformationPipeline(
         config=config,

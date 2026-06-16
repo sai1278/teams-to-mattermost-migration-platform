@@ -350,7 +350,8 @@ def test_pipeline_failure_marks_metrics_and_closes_writer(tmp_path: Path) -> Non
         record_service=MattermostRecordService(config, metrics=metrics),
         source=_MinimalSource(export),
         validator=_FailingValidator(config),
-        writer=writer,
+        # pyrefly: ignore [bad-argument-type]
+        writer=writer
     )
 
     with pytest.raises(InputValidationError):
