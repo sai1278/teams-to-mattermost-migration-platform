@@ -7,8 +7,11 @@ ENV_FILE="${PROJECT_ROOT}/.env"
 ENV_TEMPLATE="${PROJECT_ROOT}/infrastructure/docker/.env.example"
 COMPOSE_FILE_CORE="${PROJECT_ROOT}/infrastructure/docker/docker-compose.yml"
 COMPOSE_FILE_MONITORING="${PROJECT_ROOT}/infrastructure/docker/docker-compose.monitoring.yml"
+# shellcheck disable=SC2034
 DEFAULT_INPUT_EXPORT="${PROJECT_ROOT}/tests/fixtures/sample-teams-export.json"
+# shellcheck disable=SC2034
 DEFAULT_OUTPUT_JSONL="${PROJECT_ROOT}/artifacts/imports/sample-import.jsonl"
+# shellcheck disable=SC2034
 DEFAULT_METRICS_OUTPUT="${PROJECT_ROOT}/artifacts/metrics/parser.prom"
 
 RED='\033[0;31m'
