@@ -6,8 +6,10 @@ import contextlib
 import json
 import logging
 import os
+import signal
 import tempfile
 import time
+import types
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -174,108 +176,139 @@ class TransformationPipeline:
         self._source = source
         self._validator = validator
         self._writer = writer
+        self._shutdown_requested = False
 
     def run(self) -> PipelineResult:
-        tracer = trace.get_tracer("teams_mattermost_migration_parser.pipeline")
-        with tracer.start_as_current_span("migration_pipeline_run") as span:
-            span.set_attribute("correlation_id", self._config.correlation_id)
-            span.set_attribute("input_path", str(self._config.input_path))
-            span.set_attribute("output_path", str(self._config.output_path))
+        self._shutdown_requested = False
 
-            start_time = time.perf_counter()
-            bytes_processed = self._source.input_size_bytes()
-            self._metrics.observe_input_bytes(bytes_processed)
-            span.set_attribute("bytes_processed", bytes_processed)
+        def handle_signal(
+            signum: int, frame: types.FrameType | None
+        ) -> None:
+            LOGGER.warning(f"Received signal {signum}, requesting graceful shutdown...")
+            self._shutdown_requested = True
 
-            checkpoint = None
-            resume_mode = False
-            if self._config.resume and self._config.checkpoint_path:
-                loaded_checkpoint = MigrationCheckpoint.load(self._config.checkpoint_path)
-                if loaded_checkpoint is not None:
-                    checkpoint = loaded_checkpoint
-                    if getattr(self._writer, "has_existing_content", False):
-                        resume_mode = True
-                        self._metrics.observe_checkpoint_resume()
-                        span.set_attribute("resumed", True)
-                    else:
-                        LOGGER.warning(
-                            "checkpoint found but output file has no "
-                            "existing content; starting fresh",
-                            extra={
-                                "event": "resume_reset",
-                                "details": {"checkpoint_path": str(self._config.checkpoint_path)},
-                            },
-                        )
-                        checkpoint = MigrationCheckpoint(self._config.checkpoint_path)
-                else:
-                    checkpoint = MigrationCheckpoint(self._config.checkpoint_path)
-
+        old_term: signal.Handlers = signal.SIG_DFL
+        old_int: signal.Handlers = signal.SIG_DFL
+        try:
             try:
-                # Fail-fast: reject unsupported schema versions before any work
-                if hasattr(self._source, "validate_schema_version"):
-                    self._time_stage(
-                        "schema_version_check",
-                        self._source.validate_schema_version,
-                    )
-                validation_result = self._time_stage(
-                    "validation",
-                    self._validator.validate,
-                    self._source,
-                )
-                records_written = self._time_stage(
-                    "render_and_write", self._write_records, checkpoint, resume_mode
-                )
-                duration_seconds = time.perf_counter() - start_time
-                self._metrics.mark_success(
-                    records_written=records_written,
-                    duration_seconds=duration_seconds,
-                )
-                span.set_attribute("records_written", records_written)
-                span.set_attribute("teams", validation_result.team_count)
-                span.set_attribute("channels", validation_result.channel_count)
-                span.set_attribute("users", validation_result.user_count)
-                span.set_attribute("posts", validation_result.post_count)
-                span.set_status(trace.StatusCode.OK)
-            except ParserError as exc:
-                self._metrics.mark_failure(type(exc).__name__)
-                LOGGER.exception(
-                    "pipeline execution failed",
-                    extra={"event": "pipeline_failed", "details": {"error": str(exc)}},
-                )
-                span.record_exception(exc)
-                span.set_status(trace.StatusCode.ERROR, str(exc))
-                raise
-            else:
-                if checkpoint:
-                    checkpoint.delete()
-            finally:
-                self._writer.close()
-                if hasattr(self._record_service, "close"):
-                    self._record_service.close()
-                self._metrics.publish()
+                old_term = signal.signal(signal.SIGTERM, handle_signal)
+                old_int = signal.signal(signal.SIGINT, handle_signal)
+            except ValueError:
+                pass
 
-            LOGGER.info(
-                "pipeline execution completed",
-                extra={
-                    "event": "pipeline_completed",
-                    "details": {
-                        "records_written": records_written,
-                        "teams": validation_result.team_count,
-                        "channels": validation_result.channel_count,
-                        "users": validation_result.user_count,
-                        "posts": validation_result.post_count,
-                        "bytes_processed": bytes_processed,
+            tracer = trace.get_tracer("teams_mattermost_migration_parser.pipeline")
+            with tracer.start_as_current_span("migration_pipeline_run") as span:
+                span.set_attribute("correlation_id", self._config.correlation_id)
+                span.set_attribute("input_path", str(self._config.input_path))
+                span.set_attribute("output_path", str(self._config.output_path))
+
+                start_time = time.perf_counter()
+                bytes_processed = self._source.input_size_bytes()
+                self._metrics.observe_input_bytes(bytes_processed)
+                span.set_attribute("bytes_processed", bytes_processed)
+
+                checkpoint = None
+                resume_mode = False
+                if self._config.resume and self._config.checkpoint_path:
+                    loaded_checkpoint = MigrationCheckpoint.load(self._config.checkpoint_path)
+                    if loaded_checkpoint is not None:
+                        checkpoint = loaded_checkpoint
+                        if getattr(self._writer, "has_existing_content", False):
+                            resume_mode = True
+                            self._metrics.observe_checkpoint_resume()
+                            span.set_attribute("resumed", True)
+                        else:
+                            LOGGER.warning(
+                                "checkpoint found but output file has no "
+                                "existing content; starting fresh",
+                                extra={
+                                    "event": "resume_reset",
+                                    "details": {
+                                        "checkpoint_path": str(
+                                            self._config.checkpoint_path
+                                        )
+                                    },
+                                },
+                            )
+                            checkpoint = MigrationCheckpoint(self._config.checkpoint_path)
+                    else:
+                        checkpoint = MigrationCheckpoint(self._config.checkpoint_path)
+
+                try:
+                    # Fail-fast: reject unsupported schema versions before any work
+                    if hasattr(self._source, "validate_schema_version"):
+                        self._time_stage(
+                            "schema_version_check",
+                            self._source.validate_schema_version,
+                        )
+                    validation_result = self._time_stage(
+                        "validation",
+                        self._validator.validate,
+                        self._source,
+                    )
+                    records_written = self._time_stage(
+                        "render_and_write", self._write_records, checkpoint, resume_mode
+                    )
+                    if self._shutdown_requested:
+                        raise ParserError("Pipeline execution interrupted by signal")
+                    duration_seconds = time.perf_counter() - start_time
+                    self._metrics.mark_success(
+                        records_written=records_written,
+                        duration_seconds=duration_seconds,
+                    )
+                    span.set_attribute("records_written", records_written)
+                    span.set_attribute("teams", validation_result.team_count)
+                    span.set_attribute("channels", validation_result.channel_count)
+                    span.set_attribute("users", validation_result.user_count)
+                    span.set_attribute("posts", validation_result.post_count)
+                    span.set_status(trace.StatusCode.OK)
+                except ParserError as exc:
+                    self._metrics.mark_failure(type(exc).__name__)
+                    LOGGER.exception(
+                        "pipeline execution failed",
+                        extra={"event": "pipeline_failed", "details": {"error": str(exc)}},
+                    )
+                    span.record_exception(exc)
+                    span.set_status(trace.StatusCode.ERROR, str(exc))
+                    raise
+                else:
+                    if checkpoint:
+                        checkpoint.delete()
+                finally:
+                    self._writer.close()
+                    if hasattr(self._record_service, "close"):
+                        self._record_service.close()
+                    self._metrics.publish()
+
+                LOGGER.info(
+                    "pipeline execution completed",
+                    extra={
+                        "event": "pipeline_completed",
+                        "details": {
+                            "records_written": records_written,
+                            "teams": validation_result.team_count,
+                            "channels": validation_result.channel_count,
+                            "users": validation_result.user_count,
+                            "posts": validation_result.post_count,
+                            "bytes_processed": bytes_processed,
+                        },
                     },
-                },
-            )
-            return PipelineResult(
-                bytes_processed=bytes_processed,
-                channels=validation_result.channel_count,
-                posts=validation_result.post_count,
-                records_written=records_written,
-                teams=validation_result.team_count,
-                users=validation_result.user_count,
-            )
+                )
+                return PipelineResult(
+                    bytes_processed=bytes_processed,
+                    channels=validation_result.channel_count,
+                    posts=validation_result.post_count,
+                    records_written=records_written,
+                    teams=validation_result.team_count,
+                    users=validation_result.user_count,
+                )
+        finally:
+            if old_term is not None:
+                with contextlib.suppress(ValueError):
+                    signal.signal(signal.SIGTERM, old_term)
+            if old_int is not None:
+                with contextlib.suppress(ValueError):
+                    signal.signal(signal.SIGINT, old_int)
 
     def _write_records(self, checkpoint: MigrationCheckpoint | None, resume_mode: bool) -> int:
         records_written = 0
@@ -283,6 +316,9 @@ class TransformationPipeline:
         active_direct_channel_key = None
 
         for record in self._record_service.iter_records(self._source):
+            if self._shutdown_requested:
+                LOGGER.warning("Graceful shutdown requested. Exiting record write loop.")
+                break
             rec_type = record["type"]
 
             # Resuming check

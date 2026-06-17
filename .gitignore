@@ -42,3 +42,8 @@ Thumbs.db
 
 # Node tooling
 node_modules/
+
+# Test coverage
+.coverage
+coverage.xml
+htmlcov/

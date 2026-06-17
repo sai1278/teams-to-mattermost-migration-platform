@@ -47,6 +47,23 @@ class JsonlFileWriter:
             self._current_path = self._base_path
 
         existing = self._current_path.stat().st_size if self._current_path.exists() else 0
+        if append and existing > 0:
+            try:
+                with self._current_path.open("r+b") as f:
+                    seek_pos = max(0, existing - 4096)
+                    f.seek(seek_pos)
+                    chunk = f.read()
+                    if chunk and chunk[-1] != ord('\n'):
+                        last_nl = chunk.rfind(b'\n')
+                        if last_nl != -1:
+                            truncate_pos = seek_pos + last_nl + 1
+                        else:
+                            truncate_pos = seek_pos
+                        f.seek(truncate_pos)
+                        f.truncate()
+                        existing = truncate_pos
+            except Exception:
+                pass
         self._existing_size = existing
         mode = "a" if append else "w"
         self._handle = self._current_path.open(mode, encoding="utf-8")

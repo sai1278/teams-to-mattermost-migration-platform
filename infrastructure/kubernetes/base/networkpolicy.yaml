@@ -8,6 +8,7 @@ spec:
     matchLabels:
       app.kubernetes.io/name: parser-job
   policyTypes:
+    - Ingress
     - Egress
   egress:
     - to:

@@ -109,6 +109,21 @@ def build_parser(defaults: ParserEnvironmentDefaults) -> argparse.ArgumentParser
         default=defaults.attachment_workers,
         help="Number of concurrent worker threads for downloading attachments.",
     )
+    parser.add_argument(
+        "--ms-graph-tenant-id",
+        default=defaults.ms_graph_tenant_id,
+        help="Microsoft Graph Tenant ID.",
+    )
+    parser.add_argument(
+        "--ms-graph-client-id",
+        default=defaults.ms_graph_client_id,
+        help="Microsoft Graph Client ID.",
+    )
+    parser.add_argument(
+        "--ms-graph-client-secret",
+        default=None,
+        help="Microsoft Graph Client Secret.",
+    )
     return parser
 
 
@@ -134,6 +149,9 @@ def main() -> int:
         resume=args.resume,
         max_chunk_mb=args.max_chunk_mb,
         attachment_workers=args.attachment_workers,
+        ms_graph_tenant_id=args.ms_graph_tenant_id,
+        ms_graph_client_id=args.ms_graph_client_id,
+        ms_graph_client_secret=args.ms_graph_client_secret,
     )
     config.ensure_output_parent()
 

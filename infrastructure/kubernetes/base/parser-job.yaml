@@ -14,12 +14,21 @@ spec:
       serviceAccountName: parser-runner
       securityContext:
         runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
         seccompProfile:
           type: RuntimeDefault
       containers:
         - name: parser
-          image: ghcr.io/example/teams-mattermost-parser:latest
+          image: ghcr.io/example/teams-mattermost-parser@sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
           imagePullPolicy: IfNotPresent
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
           args:
             - --input
             - $(INPUT_PATH)
@@ -35,3 +44,14 @@ spec:
             limits:
               cpu: "1"
               memory: 512Mi
+          volumeMounts:
+            - name: data-volume
+              mountPath: /data
+            - name: tmp-volume
+              mountPath: /tmp
+      volumes:
+        - name: data-volume
+          persistentVolumeClaim:
+            claimName: parser-data-pvc
+        - name: tmp-volume
+          emptyDir: {}

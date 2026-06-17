@@ -4,3 +4,5 @@ resources:
   - configmap.yaml
   - parser-job.yaml
   - networkpolicy.yaml
+  - rbac.yaml
+  - pvc.yaml

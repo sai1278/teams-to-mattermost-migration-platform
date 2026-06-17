@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import hmac
 import json
 import logging
 from collections.abc import Mapping
@@ -249,7 +250,8 @@ def test_pipeline_checkpoint_fine_grained_skipping(tmp_path: Path) -> None:
     # Compute expected hashed ID for post 2:
     # team: "it-team", channel: "general", post.id (which is source_key): "p2"
     payload = "it-team|general|p2"
-    p2_digest = hashlib.sha1(payload.encode("utf-8")).hexdigest()[:12]
+    salt = "default-anonymization-salt-value".encode("utf-8")
+    p2_digest = hmac.new(salt, payload.encode("utf-8"), hashlib.sha256).hexdigest()[:12]
     p2_hashed_id = f"post-{p2_digest}"
 
     # general channel posts partially done: last timestamp is 2000, completed IDs are p2_hashed_id.

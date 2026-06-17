@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import hmac
 import logging
 import re
 import shutil
@@ -299,9 +300,14 @@ class MattermostRecordService:
             return
 
         # 1. Users
+        salt = (
+            self._config.anonymize_salt.get_secret_value().encode("utf-8")
+            if self._config.anonymize
+            else None
+        )
         for user in source.iter_users():
             if self._config.anonymize:
-                resolved_user = stable_alias(user.username)
+                resolved_user = stable_alias(user.username, salt=salt)
             else:
                 resolved_user = self._user_slugs.make_unique(user.username)
             self._user_slug_map[user.username] = resolved_user
@@ -443,7 +449,8 @@ class MattermostRecordService:
                 post.message,
             )
         )
-        digest = hashlib.sha1(payload.encode("utf-8")).hexdigest()[:12]
+        salt = self._config.anonymize_salt.get_secret_value().encode("utf-8")
+        digest = hmac.new(salt, payload.encode("utf-8"), hashlib.sha256).hexdigest()[:12]
         return f"source-post-{digest}"
 
     def _post_import_id(self, team: TeamRecord, channel: ChannelRecord, source_key: str) -> str:
@@ -454,7 +461,8 @@ class MattermostRecordService:
                 source_key,
             )
         )
-        digest = hashlib.sha1(payload.encode("utf-8")).hexdigest()[:12]
+        salt = self._config.anonymize_salt.get_secret_value().encode("utf-8")
+        digest = hmac.new(salt, payload.encode("utf-8"), hashlib.sha256).hexdigest()[:12]
         return f"post-{digest}"
 
     def _direct_post_id(self, dc: DirectChannelRecord, post: PostRecord, index: int) -> str:
@@ -467,7 +475,8 @@ class MattermostRecordService:
                 post.message,
             )
         )
-        digest = hashlib.sha1(payload.encode("utf-8")).hexdigest()[:12]
+        salt = self._config.anonymize_salt.get_secret_value().encode("utf-8")
+        digest = hmac.new(salt, payload.encode("utf-8"), hashlib.sha256).hexdigest()[:12]
         return f"direct-post-{digest}"
 
     def _resolve_thread_root_key(self, source_key: str, parent_map: dict[str, str]) -> str:
@@ -627,7 +636,15 @@ class MattermostRecordService:
         input_dir = self._config.input_path.parent
         output_dir = self._config.output_path.parent / "attachments"
         usernames = list(self._user_slug_map.keys())
-        anonymizer = AnonymizerPipeline(usernames=usernames if self._config.anonymize else [])
+        salt = (
+            self._config.anonymize_salt.get_secret_value().encode("utf-8")
+            if self._config.anonymize
+            else None
+        )
+        anonymizer = AnonymizerPipeline(
+            usernames=usernames if self._config.anonymize else [],
+            salt=salt
+        )
         post_entries: list[tuple[int, PostRecord, str]] = []
         parent_map: dict[str, str] = {}
         for index, post in enumerate(channel.posts):
@@ -735,7 +752,11 @@ class MattermostRecordService:
         input_dir = self._config.input_path.parent
         output_dir = self._config.output_path.parent / "attachments"
         usernames = list(self._user_slug_map.keys())
-        anonymizer = AnonymizerPipeline(usernames=usernames if self._config.anonymize else [])
+        salt = self._config.anonymize_salt.get_secret_value().encode("utf-8") if self._config.anonymize else None
+        anonymizer = AnonymizerPipeline(
+            usernames=usernames if self._config.anonymize else [],
+            salt=salt
+        )
 
         for dc in source.iter_direct_channels():
             normalized_members = [self._normalize_username(m) for m in dc.members]
@@ -779,5 +800,6 @@ class MattermostRecordService:
         if username in self._user_slug_map:
             return self._user_slug_map[username]
         if self._config.anonymize:
-            return stable_alias(username)
+            salt = self._config.anonymize_salt.get_secret_value().encode("utf-8")
+            return stable_alias(username, salt=salt)
         return slugify(username)

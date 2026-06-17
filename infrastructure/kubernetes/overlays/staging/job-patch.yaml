@@ -8,7 +8,7 @@ spec:
     spec:
       containers:
         - name: parser
-          image: ghcr.io/example/teams-mattermost-parser:staging
+          image: ghcr.io/example/teams-mattermost-parser@sha256:92398a6311029c788df66c6b3b55a820875c850257e84cbaf8997a48d8a7c2937
           resources:
             requests:
               cpu: 500m

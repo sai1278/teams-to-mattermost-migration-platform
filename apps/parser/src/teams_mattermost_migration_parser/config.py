@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Literal
 from uuid import uuid4
@@ -38,6 +39,16 @@ class ParserEnvironmentDefaults(BaseSettings):
     resume: bool = True
     max_chunk_mb: int = 0
     attachment_workers: int = 4
+    anonymize_salt: SecretStr = Field(
+        default_factory=lambda: SecretStr(
+            os.environ.get("TMMP_ANONYMIZE_SALT")
+            or os.environ.get("TMMP_ANONYMIZATION_SALT")
+            or "default-anonymization-salt-value"
+        )
+    )
+    ms_graph_tenant_id: str | None = None
+    ms_graph_client_id: str | None = None
+    ms_graph_client_secret: SecretStr | None = None
 
 
 class ParserConfig(BaseModel):
@@ -62,10 +73,23 @@ class ParserConfig(BaseModel):
     resume: bool = True
     max_chunk_mb: int = 0
     attachment_workers: int = Field(default=4, ge=1, le=100)
+    anonymize_salt: SecretStr = Field(
+        default_factory=lambda: SecretStr(
+            os.environ.get("TMMP_ANONYMIZE_SALT")
+            or os.environ.get("TMMP_ANONYMIZATION_SALT")
+            or "default-anonymization-salt-value"
+        )
+    )
+    ms_graph_tenant_id: str | None = None
+    ms_graph_client_id: str | None = None
+    ms_graph_client_secret: SecretStr | None = None
 
     @field_validator("input_path")
     @classmethod
     def validate_input_path(cls, value: Path) -> Path:
+        val_str = str(value).lower()
+        if val_str in {"ms-graph", "graph"} or val_str.startswith("graph://"):
+            return value
         if value.suffix.lower() not in {".json"}:
             raise ValueError("input_path must reference a normalized JSON export file")
         return value
@@ -106,6 +130,10 @@ class ParserConfig(BaseModel):
         resume: bool | None = None,
         max_chunk_mb: int | None = None,
         attachment_workers: int | None = None,
+        anonymize_salt: str | None = None,
+        ms_graph_tenant_id: str | None = None,
+        ms_graph_client_id: str | None = None,
+        ms_graph_client_secret: str | None = None,
     ) -> ParserConfig:
         defaults = ParserEnvironmentDefaults()
         resolved_output_path = Path(output_path)
@@ -145,6 +173,18 @@ class ParserConfig(BaseModel):
             attachment_workers=defaults.attachment_workers
             if attachment_workers is None
             else attachment_workers,
+            anonymize_salt=defaults.anonymize_salt
+            if anonymize_salt is None
+            else SecretStr(anonymize_salt),
+            ms_graph_tenant_id=defaults.ms_graph_tenant_id
+            if ms_graph_tenant_id is None
+            else ms_graph_tenant_id,
+            ms_graph_client_id=defaults.ms_graph_client_id
+            if ms_graph_client_id is None
+            else ms_graph_client_id,
+            ms_graph_client_secret=defaults.ms_graph_client_secret
+            if ms_graph_client_secret is None
+            else SecretStr(ms_graph_client_secret),
         )
 
     def ensure_output_parent(self) -> None:

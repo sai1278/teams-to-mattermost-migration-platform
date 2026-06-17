@@ -26,18 +26,22 @@ def slugify(value: str) -> str:
 def stable_alias(value: str, salt: bytes | None = None) -> str:
     """Generate a deterministic alias for anonymized identities."""
     if salt is None:
-        salt_str = os.environ.get("TMMP_ANONYMIZATION_SALT", "default-anonymization-salt-value")
+        salt_str = (
+            os.environ.get("TMMP_ANONYMIZE_SALT")
+            or os.environ.get("TMMP_ANONYMIZATION_SALT")
+            or "default-anonymization-salt-value"
+        )
         salt = salt_str.encode("utf-8")
     digest = hmac.new(salt, value.encode("utf-8"), hashlib.sha256).hexdigest()[:12]
     return f"user-{digest}"
 
 
-
 class AnonymizerPipeline:
     """Extensible pipeline to detect and redact PII from messages."""
 
-    def __init__(self, usernames: list[str] | None = None):
+    def __init__(self, usernames: list[str] | None = None, salt: bytes | None = None):
         self.usernames = usernames or []
+        self.salt = salt
         self.email_regex = re.compile(
             r"[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+", re.IGNORECASE
         )
@@ -75,7 +79,7 @@ class AnonymizerPipeline:
         for username in self.usernames:
             if not username:
                 continue
-            alias = stable_alias(username)
+            alias = stable_alias(username, salt=self.salt)
             pattern = re.compile(rf"\b{re.escape(username)}\b", re.IGNORECASE)
             message = pattern.sub(alias, message)
 

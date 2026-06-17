@@ -8,4 +8,4 @@ spec:
     spec:
       containers:
         - name: parser
-          image: teams-mattermost-parser:local
+          image: teams-mattermost-parser@sha256:b1d8f8a846c4f826359df3ad871891b97ad89495fc9f63567761019623259
