@@ -33,4 +33,19 @@ fi
 
 PYTHONPATH="${PROJECT_ROOT}/apps/parser/src" python3 -m teams_mattermost_migration_parser.cli "${parser_args[@]}"
 
+if [[ -f "${OUTPUT_PATH}" ]]; then
+  chmod 600 "${OUTPUT_PATH}"
+fi
+# Also chmod any chunk part files
+base_dir="$(dirname "${OUTPUT_PATH}")"
+base_name="$(basename "${OUTPUT_PATH}")"
+stem="${base_name%.*}"
+ext="${base_name##*.}"
+# Find and chmod all matching parts: e.g. import.part*.jsonl
+for part_file in "${base_dir}/${stem}.part"*".${ext}"; do
+  if [[ -f "${part_file}" ]]; then
+    chmod 600 "${part_file}"
+  fi
+done
+
 log_ok "Generated import payload at ${OUTPUT_PATH}."

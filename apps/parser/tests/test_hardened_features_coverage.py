@@ -391,3 +391,106 @@ def test_services_concurrent_attachment_download_failure(
     expected_msg = "Concurrent attachment download failed: Simulated concurrent failure"
     assert any(expected_msg in msg for msg in caplog.messages)
     assert len(records) > 0
+
+
+def test_attachment_download_enforces_ssl(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import urllib.request
+    import ssl
+
+    config = _config(tmp_path)
+    service = MattermostRecordService(config)
+
+    called_context = None
+    called_req = None
+    called_timeout = None
+
+    class MockResponse:
+        def __enter__(self) -> "MockResponse":
+            return self
+        def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
+            pass
+        def read(self, n: int = -1) -> bytes:
+            return b""
+
+    def mock_urlopen(
+        req: urllib.request.Request,
+        timeout: int | None = None,
+        context: ssl.SSLContext | None = None,
+    ) -> Any:
+        nonlocal called_req, called_timeout, called_context
+        called_req = req
+        called_timeout = timeout
+        called_context = context
+        return MockResponse()
+
+    original_create_default_context = ssl.create_default_context
+    created_contexts: list[ssl.SSLContext] = []
+
+    def mock_create_default_context(*args: Any, **kwargs: Any) -> ssl.SSLContext:
+        ctx = original_create_default_context(*args, **kwargs)
+        created_contexts.append(ctx)
+        return ctx
+
+    # Patch urlopen and ssl.create_default_context in the services module so that
+    # no real network connection is made and the SSL context capture is observable.
+    monkeypatch.setattr(
+        "teams_mattermost_migration_parser.application.services.urllib.request.urlopen",
+        mock_urlopen,
+    )
+    monkeypatch.setattr(
+        "teams_mattermost_migration_parser.application.services.ssl.create_default_context",
+        mock_create_default_context,
+    )
+    # Prevent shutil.copyfileobj from spinning on the mock response
+    monkeypatch.setattr(
+        "teams_mattermost_migration_parser.application.services.shutil.copyfileobj",
+        lambda src, dst, *a, **kw: None,
+    )
+
+    attachment = AttachmentRecord(
+        name="remote.pdf",
+        url="https://example.com/remote.pdf",
+        path="remote.pdf",
+    )
+
+    input_dir = tmp_path / "source"
+    output_dir = tmp_path / "output" / "attachments"
+
+    res = service._process_attachment(attachment, input_dir, output_dir)
+
+    assert res is not None
+    assert res.startswith("attachments/")
+    assert called_req is not None
+    assert called_req.get_full_url() == "https://example.com/remote.pdf"
+    assert called_timeout == 10
+    assert called_context is not None
+    assert called_context in created_contexts
+
+
+def test_validation_rejects_under_arity_dm(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    validator = ExportValidationService(config)
+
+    export = TeamsExport(
+        users=(
+            UserRecord(
+                username="john-doe",
+                email="john.doe@company.com",
+                nickname="John Doe",
+                teams=(),
+            ),
+        ),
+        teams=(),
+        direct_channels=(
+            DirectChannelRecord(
+                members=("john-doe",),
+                posts=(),
+            ),
+        ),
+    )
+
+    with pytest.raises(InputValidationError) as exc_info:
+        validator.validate(export)
+
+    assert "direct channel has invalid member count: 1 (minimum 2 required)" in str(exc_info.value)
+
